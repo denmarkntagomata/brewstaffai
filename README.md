@@ -13,8 +13,6 @@ Internal system: **Manager and Staff only.**
 | Response time | **How the AI Works** shows how fast one AI prediction is, and the average time for planning a day, testing an hour, and AI tagging (measured automatically while the app is used). Included in the backup ZIP as `response_times.csv`. |
 | Small fixes | Chart labels no longer overlap; single-topic charts no longer show one very thick bar. |
 
-Edit `privacy.py` to change the contact person or how long data is kept. Change `NOTICE_VERSION` there if you edit the text, so everyone is asked to read it again.
-
 ## What was new in v4
 
 | Area | What changed |
