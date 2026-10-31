@@ -1,0 +1,154 @@
+|--- barista_load <= 1.34
+|   |--- num_barista <= 1.50
+|   |   |--- barista_load <= 1.07
+|   |   |   |--- barista_load <= 0.69
+|   |   |   |   |--- cashier_load <= 0.16
+|   |   |   |   |   |--- class: Okay
+|   |   |   |   |--- cashier_load >  0.16
+|   |   |   |   |   |--- class: Okay
+|   |   |   |--- barista_load >  0.69
+|   |   |   |   |--- complex_prep <= 4.81
+|   |   |   |   |   |--- p_simple <= 0.58
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |--- p_simple >  0.58
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |--- complex_prep >  4.81
+|   |   |   |   |   |--- class: Okay
+|   |   |--- barista_load >  1.07
+|   |   |   |--- cashier_mean <= 1.04
+|   |   |   |   |--- complex_prep <= 4.45
+|   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- complex_prep >  4.45
+|   |   |   |   |   |--- class: Okay
+|   |   |   |--- cashier_mean >  1.04
+|   |   |   |   |--- class: Congested
+|   |--- num_barista >  1.50
+|   |   |--- barista_load <= 1.08
+|   |   |   |--- cashier_load <= 1.21
+|   |   |   |   |--- complex_prep <= 5.48
+|   |   |   |   |   |--- barista_load <= 1.01
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |--- barista_load >  1.01
+|   |   |   |   |   |   |--- num_cashier <= 1.50
+|   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |   |--- num_cashier >  1.50
+|   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |--- complex_prep >  5.48
+|   |   |   |   |   |--- class: Okay
+|   |   |   |--- cashier_load >  1.21
+|   |   |   |   |--- class: Okay
+|   |   |--- barista_load >  1.08
+|   |   |   |--- arr_rate <= 0.82
+|   |   |   |   |--- cashier_load <= 0.46
+|   |   |   |   |   |--- complex_prep <= 4.35
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |--- complex_prep >  4.35
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |--- cashier_load >  0.46
+|   |   |   |   |   |--- complex_prep <= 4.72
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- complex_prep >  4.72
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |--- arr_rate >  0.82
+|   |   |   |   |--- cashier_load <= 1.18
+|   |   |   |   |   |--- p_simple <= 0.28
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |--- p_simple >  0.28
+|   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |--- cashier_load >  1.18
+|   |   |   |   |   |--- class: Okay
+|--- barista_load >  1.34
+|   |--- barista_load <= 2.78
+|   |   |--- barista_load <= 1.77
+|   |   |   |--- arr_rate <= 0.75
+|   |   |   |   |--- complex_prep <= 3.90
+|   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- complex_prep >  3.90
+|   |   |   |   |   |--- cashier_load <= 0.40
+|   |   |   |   |   |   |--- arr_rate <= 0.48
+|   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |--- arr_rate >  0.48
+|   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- cashier_load >  0.40
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |--- arr_rate >  0.75
+|   |   |   |   |--- barista_load <= 1.53
+|   |   |   |   |   |--- cashier_load <= 1.03
+|   |   |   |   |   |   |--- arr_rate <= 0.93
+|   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |   |--- arr_rate >  0.93
+|   |   |   |   |   |   |   |--- p_simple <= 0.50
+|   |   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |   |   |--- p_simple >  0.50
+|   |   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |--- cashier_load >  1.03
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- barista_load >  1.53
+|   |   |   |   |   |--- p_simple <= 0.35
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- p_simple >  0.35
+|   |   |   |   |   |   |--- simple_prep <= 1.87
+|   |   |   |   |   |   |   |--- class: Okay
+|   |   |   |   |   |   |--- simple_prep >  1.87
+|   |   |   |   |   |   |   |--- arr_rate <= 1.05
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |   |--- arr_rate >  1.05
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |--- barista_load >  1.77
+|   |   |   |--- arr_rate <= 0.80
+|   |   |   |   |--- barista_load <= 2.39
+|   |   |   |   |   |--- p_simple <= 0.35
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- p_simple >  0.35
+|   |   |   |   |   |   |--- cashier_mean <= 0.91
+|   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |--- cashier_mean >  0.91
+|   |   |   |   |   |   |   |--- simple_prep <= 1.93
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |   |--- simple_prep >  1.93
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- barista_load >  2.39
+|   |   |   |   |   |--- class: Overloaded
+|   |   |   |--- arr_rate >  0.80
+|   |   |   |   |--- barista_load <= 2.49
+|   |   |   |   |   |--- arr_rate <= 1.06
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- arr_rate >  1.06
+|   |   |   |   |   |   |--- cashier_mean <= 1.09
+|   |   |   |   |   |   |   |--- simple_prep <= 2.10
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |   |--- simple_prep >  2.10
+|   |   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |   |--- cashier_mean >  1.09
+|   |   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- barista_load >  2.49
+|   |   |   |   |   |--- p_simple <= 0.60
+|   |   |   |   |   |   |--- class: Congested
+|   |   |   |   |   |--- p_simple >  0.60
+|   |   |   |   |   |   |--- class: Congested
+|   |--- barista_load >  2.78
+|   |   |--- barista_load <= 3.54
+|   |   |   |--- arr_rate <= 0.95
+|   |   |   |   |--- cashier_load <= 0.71
+|   |   |   |   |   |--- class: Overloaded
+|   |   |   |   |--- cashier_load >  0.71
+|   |   |   |   |   |--- class: Overloaded
+|   |   |   |--- arr_rate >  0.95
+|   |   |   |   |--- simple_prep <= 2.06
+|   |   |   |   |   |--- class: Congested
+|   |   |   |   |--- simple_prep >  2.06
+|   |   |   |   |   |--- class: Congested
+|   |   |--- barista_load >  3.54
+|   |   |   |--- barista_load <= 3.98
+|   |   |   |   |--- complex_prep <= 4.96
+|   |   |   |   |   |--- simple_prep <= 2.10
+|   |   |   |   |   |   |--- class: Overloaded
+|   |   |   |   |   |--- simple_prep >  2.10
+|   |   |   |   |   |   |--- class: Overloaded
+|   |   |   |   |--- complex_prep >  4.96
+|   |   |   |   |   |--- class: Overloaded
+|   |   |   |--- barista_load >  3.98
+|   |   |   |   |--- cashier_mean <= 0.98
+|   |   |   |   |   |--- class: Overloaded
+|   |   |   |   |--- cashier_mean >  0.98
+|   |   |   |   |   |--- class: Overloaded
