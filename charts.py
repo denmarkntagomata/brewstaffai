@@ -43,7 +43,7 @@ def options_bar(opts, best):
         textposition="outside", cliponaxis=False, hovertemplate="%{x}<br>Expected wait: %{y:.1f} min<extra></extra>"))
     for y, name in ((7, "Okay limit"), (15, "Overloaded limit")):
         fig.add_hline(y=y, line_dash="dot", line_color=MUTED, annotation_text=name,
-                      annotation_font_color=MUTED, annotation_position="top right")
+                      annotation_font_color=MUTED, annotation_position="bottom right")
     fig.update_yaxes(title="Average wait (minutes)", rangemode="tozero")
     fig.update_xaxes(title="Crew option (C = cashier, B = barista)")
     return _layout(fig, height=360, title=dict(text="Every crew option the AI checked", font=dict(size=16)),
@@ -111,6 +111,7 @@ def category_bar(df):
     fig = go.Figure(go.Bar(x=c.values, y=c.index, orientation="h", marker_color=GREEN, text=c.values,
                            textposition="outside", cliponaxis=False))
     fig.update_xaxes(visible=False, range=[0, max(c.values) * 1.3])
+    fig.update_layout(bargap=0.55 if len(c) < 3 else 0.3)
     return _layout(fig, height=300, title=dict(text="What the reports are about", font=dict(size=16)))
 
 

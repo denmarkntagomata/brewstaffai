@@ -21,6 +21,7 @@ import login_page               # noqa: E402
 import pages_manager as pm      # noqa: E402
 import pages_pilot as pp        # noqa: E402
 import pages_staff as ps        # noqa: E402
+import privacy                  # noqa: E402
 import session_cookie as sc     # noqa: E402
 import settings_page as sp      # noqa: E402
 
@@ -68,6 +69,11 @@ def main():
 
     if fresh["must_change"]:
         sp.force_password_change(fresh)
+        return
+
+    if privacy.needs_notice(fresh):
+        if privacy.consent_page(fresh) == "declined":
+            logout("You did not accept the privacy notice. Please talk to the manager.")
         return
 
     st.logo(f"{ui.ASSETS}/logo_circle.png", size="large")

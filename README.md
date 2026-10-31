@@ -1,9 +1,21 @@
-# BrewStaffAI — Version 4
+# BrewStaffAI — Version 4.1
 
 AI-Based Staffing Recommendation System for Jungle Brew Café, Parañaque City.
 Internal system: **Manager and Staff only.**
 
-## What's new in v4
+## What's new in v4.1
+
+| Area | What changed |
+|---|---|
+| Manager decides | In **Plan the day**, the manager can change the cashiers/baristas for any hour before publishing. The AI re-checks those hours and shows the new expected wait. The AI's original crew is saved next to the final crew, and the activity log records how many hours were changed. |
+| Privacy notice | Every user reads and accepts a one-time privacy notice (Data Privacy Act of 2012, RA 10173) before using the system. Users can read it again in **Settings → My account**. Accepting or declining is logged. |
+| Accuracy per level | **How the AI Works** now shows precision, recall, and F1-score for Okay, Congested, and Overloaded, plus a short explanation of where the AI makes mistakes. |
+| Response time | **How the AI Works** shows how fast one AI prediction is, and the average time for planning a day, testing an hour, and AI tagging (measured automatically while the app is used). Included in the backup ZIP as `response_times.csv`. |
+| Small fixes | Chart labels no longer overlap; single-topic charts no longer show one very thick bar. |
+
+Edit `privacy.py` to change the contact person or how long data is kept. Change `NOTICE_VERSION` there if you edit the text, so everyone is asked to read it again.
+
+## What was new in v4
 
 | Area | What changed |
 |---|---|
@@ -81,6 +93,7 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 | `app.py` | Start here: login check, sidebar menu, badges, auto logout, error screen |
 | `login_page.py` | Login screen and first-time setup |
 | `session_cookie.py` | Stay logged in after a page refresh |
+| `privacy.py` | One-time privacy notice and consent |
 | `auth.py` | Email, password, lockout, and timeout rules |
 | `db.py` | Database (Neon PostgreSQL online, SQLite locally) |
 | `pages_manager.py` / `pages_pilot.py` / `pages_staff.py` / `settings_page.py` | The pages |
@@ -96,3 +109,4 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 - The tagging check only uses reports that have text. Editing a report clears its check label, because the AI re-tags it.
 - Archived reports disappear from the staff member's **My Reports** too.
 - If a browser blocks cookies, the app still works; a refresh just asks for the password again.
+- Privacy notice: data is kept until the end of the study (December 2026) and the contact is "the research team leader through the café manager". Change both in `privacy.py` if your group decides differently.

@@ -2,6 +2,8 @@
 pages_staff.py - Staff pages: My Shift Today, End-of-Shift Report, Report an Incident, My Reports.
 Built for phones: big buttons, few fields, and a clear AI result after every report.
 """
+import time
+
 import streamlit as st
 
 import charts
@@ -48,6 +50,14 @@ def _predict_level(customers, cashiers, baristas):
     level, _ = predict(get_model(), {**base_condition(), "arr_rate": max(customers, 1) / 60,
                                      "num_cashier": cashiers, "num_barista": baristas})
     return level
+
+
+def _tag(text):
+    t0 = time.perf_counter()
+    tags = tag_feedback(text, db.staff_names())
+    if tags.get("provider"):
+        db.record_timing("Tag a staff report (Gemini/Groq)", time.perf_counter() - t0)
+    return tags
 
 
 def _level_label(level):
@@ -117,7 +127,7 @@ def end_of_shift():
     if sent and not _already_sent("eos", f"{d}{slot}{customers}{text}"):
         with st.spinner("The AI is reading your report..."):
             pred = _predict_level(customers, cashiers, baristas)
-            tags = tag_feedback(text or f"Shift felt {level}.", db.staff_names())
+            tags = _tag(text or f"Shift felt {level}.")
         db.add_report(user_email=user["email"], report_type="end_of_shift", report_date=str(d), time_slot=slot,
                       customers=customers, cashiers=cashiers, baristas=baristas, reported_level=level,
                       predicted_level=pred, text=text, sentiment=tags["sentiment"], category=tags["category"],
@@ -139,7 +149,7 @@ def incident():
             st.error("Please describe what happened.")
         elif not _already_sent("inc", text):
             with st.spinner("The AI is reading your report..."):
-                tags = tag_feedback(text, db.staff_names())
+                tags = _tag(text)
             db.add_report(user_email=user["email"], report_type="incident", report_date=str(db.ph_today()),
                           text=text, sentiment=tags["sentiment"], category=tags["category"],
                           ai_summary=tags["summary"], ai_provider=tags["provider"])
@@ -209,7 +219,7 @@ def _edit_form(r, user):
             if eos:
                 fields.update(customers=customers, reported_level=level,
                               predicted_level=_predict_level(customers, r["cashiers"] or 1, r["baristas"] or 1))
-            tags = tag_feedback(text or f"Shift felt {fields.get('reported_level')}.", db.staff_names())
+            tags = _tag(text or f"Shift felt {fields.get('reported_level')}.")
             fields.update(sentiment=tags["sentiment"], category=tags["category"], ai_summary=tags["summary"],
                           ai_provider=tags["provider"])
             ok = db.edit_report(r["id"], user["email"], **fields)

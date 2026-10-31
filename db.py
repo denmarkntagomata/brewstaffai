@@ -168,13 +168,17 @@ def check_pw(password, stored):
 
 # ------------------------------------------------------------------ setup
 # Columns added after v3. Existing databases get them through ALTER TABLE.
-NEW_REPORT_COLS = {
-    "edited_at": "TEXT",
-    "seen_by_manager": "INTEGER DEFAULT 0",
-    "reply": "TEXT", "replied_by": "TEXT", "replied_at": "TEXT",
-    "reply_seen": "INTEGER DEFAULT 1",
-    "archived_at": "TEXT", "archived_by": "TEXT", "archive_reason": "TEXT",
-    "check_sentiment": "TEXT", "check_category": "TEXT", "checked_by": "TEXT", "checked_at": "TEXT",
+NEW_COLS = {
+    "reports": {
+        "edited_at": "TEXT",
+        "seen_by_manager": "INTEGER DEFAULT 0",
+        "reply": "TEXT", "replied_by": "TEXT", "replied_at": "TEXT",
+        "reply_seen": "INTEGER DEFAULT 1",
+        "archived_at": "TEXT", "archived_by": "TEXT", "archive_reason": "TEXT",
+        "check_sentiment": "TEXT", "check_category": "TEXT", "checked_by": "TEXT", "checked_at": "TEXT",
+    },
+    "plans": {"ai_cashiers": "INTEGER", "ai_baristas": "INTEGER"},
+    "users": {"privacy_version": "TEXT", "privacy_at": "TEXT"},
 }
 
 
@@ -208,6 +212,8 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)",
         f"""CREATE TABLE IF NOT EXISTS audit(
             id {serial}, at TEXT NOT NULL, actor TEXT, action TEXT NOT NULL, detail TEXT)""",
+        f"""CREATE TABLE IF NOT EXISTS timings(
+            id {serial}, at TEXT NOT NULL, kind TEXT NOT NULL, seconds REAL NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS sessions(
             token_hash TEXT PRIMARY KEY, email TEXT NOT NULL, created_at TEXT, last_seen TEXT)""",
         "CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at)",
@@ -217,13 +223,15 @@ def init_db():
     with e.begin() as c:
         for stmt in ddl:
             c.execute(sa.text(stmt))
-    existing = {col["name"] for col in sa.inspect(e).get_columns("reports")}
+    inspector = sa.inspect(e)
     with e.begin() as c:
-        for name, kind in NEW_REPORT_COLS.items():
-            if name not in existing:
-                c.execute(sa.text(f"ALTER TABLE reports ADD COLUMN {name} {kind}"))
-                if name == "seen_by_manager":    # reports from before v4 are not "new"
-                    c.execute(sa.text("UPDATE reports SET seen_by_manager=1"))
+        for table, cols in NEW_COLS.items():
+            existing = {col["name"] for col in inspector.get_columns(table)}
+            for name, kind in cols.items():
+                if name not in existing:
+                    c.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {name} {kind}"))
+                    if name == "seen_by_manager":    # reports from before v4 are not "new"
+                        c.execute(sa.text("UPDATE reports SET seen_by_manager=1"))
     _READY = True
     cleanup()
 
@@ -332,7 +340,13 @@ def staff_names():
 
 
 def get_user(email):
-    return _one("SELECT email, full_name, role, active, must_change FROM users WHERE email=:e", e=email)
+    return _one("""SELECT email, full_name, role, active, must_change, privacy_version, privacy_at
+                   FROM users WHERE email=:e""", e=email)
+
+
+def accept_privacy(email, version):
+    _exec("UPDATE users SET privacy_version=:v, privacy_at=:t WHERE email=:e", v=version, t=now(), e=email)
+    log(email, "privacy_accepted", f"notice v{version}")
 
 
 # ------------------------------------------------------------------ login sessions (cookie)
@@ -537,16 +551,33 @@ def save_plans(rows, plan_date, created_by):
         c.execute(sa.text("DELETE FROM plans WHERE plan_date=:d"), {"d": plan_date})
         for r in rows:
             c.execute(sa.text("""INSERT INTO plans(created_at, plan_date, time_slot, customers, cashiers, baristas,
-                                 predicted_level, expected_wait, ai_insight, created_by)
-                                 VALUES(:t, :d, :s, :cu, :ca, :b, :l, :w, :i, :by)"""),
+                                 predicted_level, expected_wait, ai_insight, created_by, ai_cashiers, ai_baristas)
+                                 VALUES(:t, :d, :s, :cu, :ca, :b, :l, :w, :i, :by, :aic, :aib)"""),
                       {"t": now(), "d": plan_date, "s": r["slot"], "cu": int(r["customers"]),
                        "ca": int(r["cashiers"]), "b": int(r["baristas"]), "l": r["level"],
-                       "w": float(r["wait"]), "i": r.get("insight", ""), "by": created_by})
-    log(created_by, "plan_published", f"{plan_date} ({len(rows)} hour(s))")
+                       "w": float(r["wait"]), "i": r.get("insight", ""), "by": created_by,
+                       "aic": int(r.get("ai_cashiers", r["cashiers"])), "aib": int(r.get("ai_baristas", r["baristas"]))})
+    changed = sum(1 for r in rows if (r.get("ai_cashiers", r["cashiers"]), r.get("ai_baristas", r["baristas"]))
+                  != (r["cashiers"], r["baristas"]))
+    log(created_by, "plan_published",
+        f"{plan_date} ({len(rows)} hour(s)" + (f", {changed} changed by the manager)" if changed else ")"))
 
 
 def get_plans(plan_date):
     return _rows("SELECT * FROM plans WHERE plan_date=:d ORDER BY time_slot", d=str(plan_date))
+
+
+# ------------------------------------------------------------------ response times
+def record_timing(kind, seconds):
+    try:
+        _exec("INSERT INTO timings(at, kind, seconds) VALUES(:a, :k, :s)", a=now(), k=kind, s=float(seconds))
+    except Exception:
+        pass
+
+
+def timing_stats():
+    return _rows("""SELECT kind, COUNT(*) AS n, AVG(seconds) AS avg_s, MIN(seconds) AS min_s, MAX(seconds) AS max_s
+                    FROM timings GROUP BY kind""")
 
 
 # ------------------------------------------------------------------ backup
@@ -559,6 +590,7 @@ def export_zip(by=None):
         "plans.csv": pd.DataFrame(_rows("SELECT * FROM plans ORDER BY id")),
         "settings.csv": pd.DataFrame(_rows("SELECT * FROM settings")),
         "activity_log.csv": pd.DataFrame(get_audit(100000)),
+        "response_times.csv": pd.DataFrame(_rows("SELECT at, kind, seconds FROM timings ORDER BY id")),
     }
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, df in tables.items():

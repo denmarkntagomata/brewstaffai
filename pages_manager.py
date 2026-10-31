@@ -3,6 +3,7 @@ pages_manager.py - Manager pages: Dashboard, Staffing Planner, Staff Reports, Ho
 """
 import json
 import os
+import time
 
 import pandas as pd
 import streamlit as st
@@ -145,9 +146,17 @@ def _plan_day():
 
     if st.button("Generate AI plan for the day", icon=":material/auto_awesome:", type="primary", key="day_go"):
         with st.spinner("The AI is planning every hour and double-checking each one..."):
+            t0 = time.perf_counter()
             rows = plan_day(model, slots, cust, base_condition(), max_staff())
+            db.record_timing("Plan the whole day (AI + double-check)", time.perf_counter() - t0)
+            t0 = time.perf_counter()
             insight, provider = explain_day(d.strftime("%A, %B %d"), rows)
-        st.session_state.day_result = {"date": str(d), "rows": rows, "insight": insight, "provider": provider}
+            if provider:
+                db.record_timing("AI explanation (Gemini/Groq)", time.perf_counter() - t0)
+        for r in rows:
+            r.update(ai_cashiers=r["cashiers"], ai_baristas=r["baristas"], ai_level=r["level"], changed=False)
+        st.session_state.day_result = {"date": str(d), "rows": rows, "insight": insight, "provider": provider,
+                                       "edit": 0}
 
     res = st.session_state.get("day_result")
     if not res or res["date"] != str(d):
@@ -156,10 +165,12 @@ def _plan_day():
     st.divider()
     ui.ai_card("AI plan summary", res["provider"], ins["headline"], [ins["peak"]] + list(ins["actions"]))
 
-    st.markdown("#### How busy each hour will be (with the recommended crew)")
+    changed = sum(r["changed"] for r in rows)
+    title = "with your changes" if changed else "with the recommended crew"
+    st.markdown(f"#### How busy each hour will be ({title})")
     ui.plain_chart(charts.day_strip(rows))
     ui.legend()
-    st.markdown("#### Recommended crew vs. expected customers")
+    st.markdown("#### Crew vs. expected customers")
     ui.plain_chart(charts.day_chart(rows))
 
     peak = max(rows, key=lambda r: r["customers"])
@@ -170,21 +181,72 @@ def _plan_day():
         ui.kpi("Most staff needed", max(r["cashiers"] + r["baristas"] for r in rows), "counter staff at one time")
     with c:
         ui.kpi("Hours with short waits", f"{sum(r['level'] == 'Okay' for r in rows)} / {len(rows)}",
-               "with the available staff", color=ui.LEVEL_COLOR["Okay"])
-    with st.expander("Hour-by-hour table"):
-        t = pd.DataFrame(rows)
-        t["Cashiers"], t["Baristas"] = t.cashiers, t.baristas
-        t["Level"] = t.level.map(lambda l: f"{ui.LEVEL_ICON[l]} {l}")
-        t["AI confidence"] = t.confidence.map(lambda p: f"{p:.0%}")
-        st.dataframe(t.rename(columns={"slot": "Hour", "customers": "Customers", "wait": "Expected wait (min)"})
-                     [["Hour", "Customers", "Cashiers", "Baristas", "Level", "Expected wait (min)", "AI confidence"]],
-                     hide_index=True, width="stretch")
+               "with this plan", color=ui.LEVEL_COLOR["Okay"])
     if not all(r["reached"] for r in rows):
         st.warning("Some hours cannot reach short waits even with all available staff. "
                    "Consider extra help or a simpler menu for those hours.")
+
+    _adjust_crew(res)
+
+    if changed:
+        st.info(f"You changed {changed} hour(s). The AI's original crew is saved too, so we can compare later.")
     if st.button("Publish this plan to staff", icon=":material/campaign:", type="primary", key="day_pub"):
         db.save_plans(rows, res["date"], st.session_state.user["email"])
         st.success("Published. Staff will see it on their 'My Shift Today' page.")
+
+
+def _adjust_crew(res):
+    """The AI recommends; the manager decides. Any hour can be changed before publishing."""
+    rows = res["rows"]
+    with st.expander("Hour-by-hour table · change the crew if needed", expanded=any(r["changed"] for r in rows)):
+        st.caption("Change the cashiers or baristas for any hour, then press **Check my changes**. "
+                   "The AI re-checks those hours so you can see the expected wait before publishing.")
+        t = pd.DataFrame({
+            "Hour": [r["slot"] for r in rows],
+            "Customers": [r["customers"] for r in rows],
+            "AI crew": [f"{r['ai_cashiers']}C + {r['ai_baristas']}B" for r in rows],
+            "Cashiers": [r["cashiers"] for r in rows],
+            "Baristas": [r["baristas"] for r in rows],
+            "Level": [f"{ui.LEVEL_ICON[r['level']]} {r['level']}" for r in rows],
+            "Expected wait (min)": [r["wait"] for r in rows],
+            "AI confidence": [f"{r['confidence']:.0%}" for r in rows],
+            "Changed": ["Yes" if r["changed"] else "" for r in rows],
+        })
+        edited = st.data_editor(
+            t, hide_index=True, width="stretch", key=f"crew_edit_{res['date']}_{res['edit']}",
+            disabled=[c for c in t.columns if c not in ("Cashiers", "Baristas")],
+            column_config={"Cashiers": st.column_config.NumberColumn(min_value=1, max_value=2, step=1),
+                           "Baristas": st.column_config.NumberColumn(min_value=1, max_value=4, step=1)})
+        c1, c2, _ = st.columns([1, 1, 2])
+        if c1.button("Check my changes", icon=":material/fact_check:", key="crew_apply", width="stretch"):
+            model, base = get_model(), base_condition()
+            with st.spinner("Re-checking the hours you changed..."):
+                for r, cash, bar in zip(rows, edited.Cashiers, edited.Baristas):
+                    cash = int(cash) if pd.notna(cash) else r["cashiers"]
+                    bar = int(bar) if pd.notna(bar) else r["baristas"]
+                    if (cash, bar) == (r["cashiers"], r["baristas"]):
+                        continue
+                    cond = {**base, "arr_rate": max(r["customers"], 1) / 60}
+                    level, probs = predict(model, {**cond, "num_cashier": cash, "num_barista": bar})
+                    sim = sim_check(cond, cash, bar)
+                    r.update(cashiers=cash, baristas=bar, level=level, confidence=probs.get(level, 0.0),
+                             wait=round(sim["avg_wait"], 1), walkout=sim["balk_rate"],
+                             changed=(cash, bar) != (r["ai_cashiers"], r["ai_baristas"]))
+            res["edit"] += 1
+            st.rerun()
+        if any(r["changed"] for r in rows) and c2.button("Undo my changes", icon=":material/undo:",
+                                                         key="crew_undo", width="stretch"):
+            model, base = get_model(), base_condition()
+            for r in rows:
+                if r["changed"]:
+                    cond = {**base, "arr_rate": max(r["customers"], 1) / 60}
+                    level, probs = predict(model, {**cond, "num_cashier": r["ai_cashiers"],
+                                                   "num_barista": r["ai_baristas"]})
+                    sim = sim_check(cond, r["ai_cashiers"], r["ai_baristas"])
+                    r.update(cashiers=r["ai_cashiers"], baristas=r["ai_baristas"], level=level,
+                             confidence=probs.get(level, 0.0), wait=round(sim["avg_wait"], 1), changed=False)
+            res["edit"] += 1
+            st.rerun()
 
 
 def _plan_hour():
@@ -206,6 +268,7 @@ def _plan_hour():
     if st.button("Test this hour", icon=":material/science:", key="hr_go"):
         cond = {**base_condition(), "arr_rate": customers / 60}
         with st.spinner("The AI is checking every crew option..."):
+            t0 = time.perf_counter()
             cur_level, cur_probs = predict(model, {**cond, "num_cashier": cur_c, "num_barista": cur_b})
             cur_sim = sim_check(cond, cur_c, cur_b)
             best, reached, sim, opts = recommend(model, cond, max_staff())
@@ -214,6 +277,7 @@ def _plan_hour():
                        cur_walkout=cur_sim["balk_rate"], rec_c=best["cashiers"], rec_b=best["baristas"],
                        rec_level=best["level"], rec_conf=best["p_okay"], rec_wait=sim["avg_wait"],
                        rec_walkout=sim["balk_rate"], rec_util=sim["util_barista"], reached=reached)
+            db.record_timing("Test a specific hour (all crew options)", time.perf_counter() - t0)
             insight, provider = explain_hour(ctx)
         st.session_state.hour_result = dict(ctx=ctx, cur_probs=cur_probs, best=best, opts=opts,
                                             insight=insight, provider=provider, date=str(d))
@@ -265,7 +329,8 @@ def _plan_hour():
     if st.button("Publish this hour to staff", icon=":material/campaign:", key="hr_pub"):
         existing = [{"slot": p["time_slot"], "customers": p["customers"], "cashiers": p["cashiers"],
                      "baristas": p["baristas"], "level": p["predicted_level"], "wait": p["expected_wait"] or 0,
-                     "insight": p["ai_insight"] or ""}
+                     "insight": p["ai_insight"] or "", "ai_cashiers": p["ai_cashiers"] or p["cashiers"],
+                     "ai_baristas": p["ai_baristas"] or p["baristas"]}
                     for p in db.get_plans(res["date"]) if p["time_slot"] != ctx["slot"]]
         existing.append({"slot": ctx["slot"], "customers": ctx["customers"], "cashiers": ctx["rec_c"],
                          "baristas": ctx["rec_b"], "level": ctx["rec_level"], "wait": round(ctx["rec_wait"], 1),
@@ -470,6 +535,43 @@ def how_ai_works():
 it guessed the right congestion level <b>{m['test_accuracy']:.1%}</b> of the time. Always guessing “Okay” would only be
 right {m['baseline_accuracy']:.0%} of the time. The AI pays the most attention to <b>barista workload</b>,
 because the barista station is the café's main bottleneck.</div>""", unsafe_allow_html=True)
+
+    st.markdown("#### Accuracy per level")
+    st.caption("Precision: when the AI says this level, how often it is right. "
+               "Recall: of the hours that really are this level, how many the AI caught.")
+    rep = m["report"]
+    pr = pd.DataFrame([{"Level": f"{ui.LEVEL_ICON[l]} {l}", "Precision": f"{rep[l]['precision']:.1%}",
+                        "Recall": f"{rep[l]['recall']:.1%}", "F1-score": f"{rep[l]['f1-score']:.1%}",
+                        "Test hours": int(rep[l]["support"])} for l in ("Okay", "Congested", "Overloaded")])
+    left, right = st.columns([1.3, 1], gap="large")
+    with left:
+        st.dataframe(pr, hide_index=True, width="stretch")
+    with right:
+        weakest = min(("Okay", "Congested", "Overloaded"), key=lambda l: rep[l]["f1-score"])
+        st.markdown(f"<div class='bs-card'><b>Where the AI makes mistakes:</b> the hardest level is "
+                    f"<b>{weakest}</b> ({rep[weakest]['f1-score']:.0%} F1). Most mistakes happen in hours close to "
+                    f"the 7-minute or 15-minute limit, where a small change in customers moves the hour to the next "
+                    f"level. The AI almost never confuses Okay with Overloaded.</div>", unsafe_allow_html=True)
+
+    st.markdown("#### Response time")
+    model = get_model()
+    cond = {**base_condition(), "arr_rate": 20 / 60, "num_cashier": 1, "num_barista": 2}
+    t0 = time.perf_counter()
+    for _ in range(50):
+        predict(model, cond)
+    one = (time.perf_counter() - t0) / 50 * 1000
+    stats = db.timing_stats()
+    a, b = st.columns([1, 2], gap="large")
+    with a:
+        ui.kpi("One AI prediction", f"{one:.1f} ms", "measured just now (average of 50)", color=ui.LIME)
+    with b:
+        if stats:
+            st.dataframe(pd.DataFrame([{"Task": s_["kind"], "Times measured": int(s_["n"]),
+                                        "Average (sec)": round(s_["avg_s"], 2), "Fastest": round(s_["min_s"], 2),
+                                        "Slowest": round(s_["max_s"], 2)} for s_ in stats]),
+                         hide_index=True, width="stretch")
+        else:
+            st.caption("Times for planning, testing an hour, and AI tagging appear here after they are used.")
     st.write("")
     st.page_link(st.session_state.pages["pilot"], label="See how the AI did in real shifts (Pilot Results)",
                  icon=":material/arrow_forward:")

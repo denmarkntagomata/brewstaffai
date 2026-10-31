@@ -8,6 +8,7 @@ import streamlit as st
 
 import auth
 import db
+import privacy
 from ai_helper import ai_status, ask_llm
 from ui import AMBER, LEVEL_COLOR, MUTED, RED, badge, esc, kpi, page_header, password_feedback
 
@@ -40,6 +41,11 @@ def _my_account(user):
         st.markdown(f"**Name:** {esc(user['full_name'])}  \n**Email:** {esc(user['email'])}  \n"
                     f"**Role:** {user['role'].title()}")
         st.caption("To change your name or email, ask the manager.")
+        with st.expander("Privacy notice"):
+            privacy.show_notice_text()
+            accepted = (db.get_user(user["email"]) or {}).get("privacy_at")
+            if accepted:
+                st.caption(f"You accepted this notice on {accepted[:16]}.")
     with c2:
         st.markdown("##### Change password")
         _change_password_box(user)
@@ -199,7 +205,8 @@ ACTION_LABELS = {
     "report_status": "Report status changed", "report_edited": "Report edited by sender",
     "report_deleted": "Report deleted", "report_reply": "Manager replied", "report_archived": "Report archived",
     "report_restored": "Report restored", "archive_auto_deleted": "Old archived reports deleted",
-    "tag_checked": "AI tag checked", "tag_checks_cleared": "Tag checks cleared", "data_exported": "Data exported",
+    "tag_checked": "AI tag checked", "privacy_accepted": "Privacy notice accepted",
+    "privacy_declined": "Privacy notice declined", "tag_checks_cleared": "Tag checks cleared", "data_exported": "Data exported",
 }
 
 
