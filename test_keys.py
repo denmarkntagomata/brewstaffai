@@ -1,6 +1,5 @@
 """
-test_keys.py — checks your Gemini and Groq API keys
-=====================================================
+test_keys.py - checks your Gemini and Groq API keys
 Run in the VS Code terminal (inside the brewstaffai folder):
     python test_keys.py
 

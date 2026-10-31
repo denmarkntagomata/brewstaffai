@@ -1,6 +1,5 @@
 """
-charts.py — infographic charts (Plotly) for BrewStaffAI. Same colors everywhere:
-green = Okay, amber = Congested, red = Overloaded.
+charts.py - Plotly charts. Green = Okay, amber = Congested, red = Overloaded.
 """
 import pandas as pd
 import plotly.graph_objects as go
@@ -34,20 +33,20 @@ def wait_gauge(wait, title):
 
 def options_bar(opts, best):
     df = pd.DataFrame(opts)
-    df["name"] = df.apply(lambda r: f"{r.cashiers} 🧾 + {r.baristas} ☕", axis=1)
+    df["name"] = df.apply(lambda r: f"{r.cashiers}C + {r.baristas}B", axis=1)
     df["is_best"] = (df.cashiers == best["cashiers"]) & (df.baristas == best["baristas"])
     colors = [LEVEL_COLOR[l] for l in df.level]
     fig = go.Figure(go.Bar(
         x=df.name, y=df.wait, marker_color=colors,
         marker_line_color=[LIME if b else "rgba(0,0,0,0)" for b in df.is_best], marker_line_width=4,
-        text=[f"{w:.1f} min" + (" ★ AI pick" if b else "") for w, b in zip(df.wait, df.is_best)],
-        textposition="outside", cliponaxis=False, hovertemplate="%{x}<br>Simulated wait: %{y:.1f} min<extra></extra>"))
+        text=[f"{w:.1f} min" + (" ★ best" if b else "") for w, b in zip(df.wait, df.is_best)],
+        textposition="outside", cliponaxis=False, hovertemplate="%{x}<br>Expected wait: %{y:.1f} min<extra></extra>"))
     for y, name in ((7, "Okay limit"), (15, "Overloaded limit")):
         fig.add_hline(y=y, line_dash="dot", line_color=MUTED, annotation_text=name,
                       annotation_font_color=MUTED, annotation_position="top right")
     fig.update_yaxes(title="Average wait (minutes)", rangemode="tozero")
-    fig.update_xaxes(title="Staffing option (cashiers + baristas)")
-    return _layout(fig, height=360, title=dict(text="Every staffing option the AI checked", font=dict(size=16)),
+    fig.update_xaxes(title="Crew option (C = cashier, B = barista)")
+    return _layout(fig, height=360, title=dict(text="Every crew option the AI checked", font=dict(size=16)),
                    showlegend=False)
 
 
@@ -68,8 +67,8 @@ def confidence_bar(probs):
 def day_chart(rows):
     df = pd.DataFrame(rows)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=df.slot, y=df.cashiers, name="🧾 Cashiers", marker_color=AMBER), secondary_y=False)
-    fig.add_trace(go.Bar(x=df.slot, y=df.baristas, name="☕ Baristas", marker_color=GREEN), secondary_y=False)
+    fig.add_trace(go.Bar(x=df.slot, y=df.cashiers, name="Cashiers", marker_color=AMBER), secondary_y=False)
+    fig.add_trace(go.Bar(x=df.slot, y=df.baristas, name="Baristas", marker_color=GREEN), secondary_y=False)
     fig.add_trace(go.Scatter(x=df.slot, y=df.customers, name="Expected customers", mode="lines+markers",
                              line=dict(color=LIME, width=3), marker=dict(size=8)), secondary_y=True)
     fig.update_layout(barmode="stack", legend=dict(orientation="h", y=1.15, x=0))
@@ -103,7 +102,7 @@ def donut(labels, values, colors, center=""):
 def sentiment_donut(df):
     order = ["Positive", "Neutral", "Negative"]
     counts = [int((df.sentiment == s).sum()) for s in order]
-    return donut(["🙂 Positive", "😐 Neutral", "🙁 Negative"], counts, [LEVEL_COLOR["Okay"], BLUE, RED],
+    return donut(["Positive", "Neutral", "Negative"], counts, [LEVEL_COLOR["Okay"], BLUE, RED],
                  f"{len(df)}<br>reports")
 
 
@@ -130,13 +129,44 @@ def trend(df):
     return _layout(fig, height=300, title=dict(text="Reports per day", font=dict(size=16)))
 
 
-def confusion(cm):
+def confusion(cm, title="Right vs. wrong answers on 800 test hours", x_prefix="AI said", y_prefix="Really"):
     labels = cm["labels"]
-    fig = go.Figure(go.Heatmap(z=cm["matrix"], x=[f"AI said {l}" for l in labels], y=[f"Really {l}" for l in labels],
+    fig = go.Figure(go.Heatmap(z=cm["matrix"], x=[f"{x_prefix} {l}" for l in labels],
+                               y=[f"{y_prefix} {l}" for l in labels],
                                colorscale=[[0, "#16201B"], [1, GREEN]], showscale=False,
                                text=cm["matrix"], texttemplate="%{text}", textfont=dict(size=18)))
     fig.update_yaxes(autorange="reversed")
-    return _layout(fig, height=320, title=dict(text="Right vs. wrong answers on 800 test hours", font=dict(size=16)))
+    return _layout(fig, height=320, title=dict(text=title, font=dict(size=16)))
+
+
+def agreement_by_day(days):
+    """days: list of dicts with day (label), agree, differ."""
+    df = pd.DataFrame(days)
+    total = df.agree + df.differ
+    pct = (df.agree / total * 100).round(0)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(x=df.day, y=df.agree, name="Agreed", marker_color=LEVEL_COLOR["Okay"]), secondary_y=False)
+    fig.add_trace(go.Bar(x=df.day, y=df.differ, name="Different", marker_color=AMBER), secondary_y=False)
+    fig.add_trace(go.Scatter(x=df.day, y=pct, name="Agreement %", mode="lines+markers+text",
+                             text=[f"{p:.0f}%" for p in pct], textposition="top center",
+                             line=dict(color=LIME, width=3), marker=dict(size=9)), secondary_y=True)
+    fig.update_layout(barmode="stack", legend=dict(orientation="h", y=1.15, x=0), bargap=0.35)
+    fig.update_xaxes(type="category")
+    fig.update_yaxes(title_text="Reports", dtick=1, rangemode="tozero", secondary_y=False)
+    fig.update_yaxes(title_text="Agreement", range=[0, 115], tickvals=[0, 25, 50, 75, 100], ticksuffix="%",
+                     showgrid=False, secondary_y=True)
+    return _layout(fig, height=380)
+
+
+def score_gauge(value, target, title):
+    color = LEVEL_COLOR["Okay"] if value >= target else AMBER
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=value * 100, number={"suffix": "%", "font": {"size": 40, "color": color}},
+        title={"text": title, "font": {"size": 15, "color": MUTED}},
+        gauge={"axis": {"range": [0, 100], "tickcolor": MUTED}, "bar": {"color": color, "thickness": 0.3},
+               "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
+               "threshold": {"line": {"color": LIME, "width": 4}, "value": target * 100}}))
+    return _layout(fig, height=250, margin=dict(l=40, r=40, t=50, b=20))
 
 
 FRIENDLY = {"barista_load": "Barista workload", "cashier_load": "Cashier workload", "arr_rate": "Customers per minute",

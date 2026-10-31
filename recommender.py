@@ -1,9 +1,11 @@
 """
-recommender.py — AI prediction + staffing recommendation (Objective 3)
+recommender.py - AI prediction + staffing recommendation (Objective 3)
 1. The Decision Tree predicts the congestion level for any staffing setup.
 2. The recommender tries every way to split the available counter staff into
-   cashiers and baristas, and picks the SMALLEST crew the model predicts as "Okay".
-3. The simulator double-checks the chosen setup (simulation confirmation).
+   cashiers and baristas, from the smallest crew upward.
+3. A crew is recommended only when BOTH the AI model predicts "Okay" AND the simulator
+   confirms an average wait of 7 minutes or less (simulation double-check). If the two
+   disagree, the recommender moves on to the next crew.
 """
 import os
 
@@ -40,11 +42,26 @@ def staffing_options(model, cond, max_staff, max_cashiers=2, max_baristas=4):
     return opts
 
 
-def pick_best(opts):
-    okay = [o for o in opts if o["level"] == "Okay"]
-    if okay:
-        return sorted(okay, key=lambda o: (o["total"], -o["p_okay"]))[0], True
-    return sorted(opts, key=lambda o: (-o["p_okay"], o["total"]))[0], False
+def pick_best(opts, cond=None):
+    """Smallest crew the AI predicts as Okay AND the simulator confirms (wait <= 7 min).
+    Returns (best_option, reached_okay)."""
+    ordered = sorted(opts, key=lambda o: (o["total"], -o["p_okay"]))
+    if cond is not None:
+        for o in ordered:
+            if o["level"] != "Okay":
+                continue
+            if "wait" not in o:
+                o["wait"] = sim_check(cond, o["cashiers"], o["baristas"])["avg_wait"]
+            o["sim_agrees"] = label(o["wait"]) == "Okay"
+            if o["sim_agrees"]:
+                return o, True
+        # nobody passes both checks: take the option with the shortest simulated wait
+        for o in opts:
+            if "wait" not in o:
+                o["wait"] = sim_check(cond, o["cashiers"], o["baristas"])["avg_wait"]
+        return min(opts, key=lambda o: (o["wait"], o["total"])), False
+    okay = [o for o in ordered if o["level"] == "Okay"]
+    return (okay[0], True) if okay else (sorted(opts, key=lambda o: (-o["p_okay"], o["total"]))[0], False)
 
 
 def sim_check(cond, cashiers, baristas, reps=10):
@@ -69,7 +86,7 @@ def plan_day(model, slots, customers_by_slot, base_cond, max_staff):
     for slot in slots:
         cust = customers_by_slot[slot]
         cond = {**base_cond, "arr_rate": max(cust, 1) / 60}
-        best, reached = pick_best(staffing_options(model, cond, max_staff))
+        best, reached = pick_best(staffing_options(model, cond, max_staff), cond)
         sim = sim_check(cond, best["cashiers"], best["baristas"], reps=10)
         rows.append({"slot": slot, "customers": cust, "cashiers": best["cashiers"], "baristas": best["baristas"],
                      "level": best["level"], "confidence": best["p_okay"], "wait": round(sim["avg_wait"], 1),

@@ -1,10 +1,8 @@
 """
-pages_manager.py — Manager pages: Dashboard, Staffing Planner, Staff Reports, How the AI Works.
-Results are shown as visuals first (gauges, colored timelines, charts) and short AI cards second.
+pages_manager.py - Manager pages: Dashboard, Staffing Planner, Staff Reports, How the AI Works.
 """
 import json
 import os
-from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -12,8 +10,9 @@ import streamlit as st
 import charts
 import db
 import ui
-from ai_helper import explain_day, explain_hour, weekly_summary
+from ai_helper import CATEGORIES, explain_day, explain_hour, weekly_summary
 from recommender import load_model, plan_day, predict, recommend, sim_check
+from ui import esc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -30,6 +29,17 @@ def slots_for(d):
     return [f"{h:02d}:00-{h + 1:02d}:00" for h in range(11 if wd == 5 else 8, 22)]
 
 
+def current_slot_index(slots):
+    """Index of the hour happening now (or the nearest open hour)."""
+    if not slots:
+        return 0
+    hour = db.ph_now().hour
+    starts = [int(s[:2]) for s in slots]
+    if hour in starts:
+        return starts.index(hour)
+    return 0 if hour < starts[0] else len(slots) - 1
+
+
 def expected_customers(d, slots):
     prof = db.get_setting("hourly_profile")
     out, src = {}, {}
@@ -40,32 +50,39 @@ def expected_customers(d, slots):
     return out, src
 
 
-def base_condition(p_simple=None):
+def base_condition():
     svc = db.get_setting("service_times")
-    return dict(p_simple=svc["p_simple"] if p_simple is None else p_simple, cashier_mean=svc["cashier"],
+    return dict(p_simple=svc["p_simple"], cashier_mean=svc["cashier"],
                 simple_prep=svc["simple"], complex_prep=svc["complex"])
+
+
+def max_staff():
+    return int(db.get_setting("max_counter_staff"))
+
+
+def staff_lookup():
+    return {u["email"]: u["full_name"] for u in db.list_users()}
 
 
 # ================================================================== DASHBOARD
 def dashboard():
     user = st.session_state.user
-    hour = datetime.now().hour
+    hour = db.ph_now().hour
     greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
-    ui.page_header("🏠", f"{greet}, {user['full_name'].split()[0]}!",
+    ui.page_header(f"{greet}, {user['full_name'].split()[0]}!",
                    "Today at a glance. Start with the Staffing Planner, then check what your staff reported.")
-    today = date.today()
-    plans = db.get_plans(str(today))
+    plans = db.get_plans(str(db.ph_today()))
     reps7 = db.get_reports(days=7)
     eos = [r for r in db.get_reports() if r["report_type"] == "end_of_shift" and r["predicted_level"]]
     match = sum(r["predicted_level"] == r["reported_level"] for r in eos)
+    open_n = sum(r["status"] == "Open" for r in reps7)
 
     a, b, c, d = st.columns(4)
     with a:
         ui.kpi("Today's plan", f"{len(plans)} hrs" if plans else "Not yet", "hours planned by the AI",
                color=ui.LIME if plans else ui.AMBER)
     with b:
-        ui.kpi("Open issues", sum(r["status"] == "Open" for r in reps7), "from staff, last 7 days",
-               color=ui.RED if any(r["status"] == "Open" for r in reps7) else ui.TEXT)
+        ui.kpi("Open issues", open_n, "from staff, last 7 days", color=ui.RED if open_n else ui.TEXT)
     with c:
         ui.kpi("Staff reports", len(reps7), "last 7 days")
     with d:
@@ -75,33 +92,34 @@ def dashboard():
 
     left, right = st.columns([1.6, 1], gap="large")
     with left:
-        st.markdown("#### 📅 Today's staffing plan")
+        st.markdown("#### Today's staffing plan")
         if plans:
             rows = [{"slot": p["time_slot"], "level": p["predicted_level"], "wait": p["expected_wait"] or 0,
                      "customers": p["customers"], "cashiers": p["cashiers"], "baristas": p["baristas"]} for p in plans]
-            st.plotly_chart(charts.day_strip(rows), width="stretch", config={"displayModeBar": False})
+            ui.plain_chart(charts.day_strip(rows))
             ui.legend()
-            st.plotly_chart(charts.day_chart(rows), width="stretch", config={"displayModeBar": False})
+            ui.plain_chart(charts.day_chart(rows))
         else:
             st.info("No plan for today yet. The AI can build one in a few seconds.")
-            st.page_link(st.session_state.pages["planner"], label="Open the Staffing Planner", icon="➡️")
+            st.page_link(st.session_state.pages["planner"], label="Open the Staffing Planner",
+                         icon=":material/arrow_forward:")
     with right:
-        st.markdown("#### 🗂️ Latest staff reports")
+        st.markdown("#### Latest staff reports")
         if not reps7:
             st.caption("No reports in the last 7 days.")
         for r in reps7[:5]:
             st.markdown(f"<div class='bs-card' style='margin-bottom:8px;padding:12px 14px'>"
-                        f"{ui.SENT_ICON.get(r['sentiment'], '')} <b>{r['ai_summary'] or r['text']}</b><br>"
-                        f"{ui.chip(ui.CAT_ICON.get(r['category'], '') + ' ' + r['category'])}"
+                        f"{ui.SENT_ICON.get(r['sentiment'], '')} <b>{esc(r['ai_summary'] or r['text'] or '')}</b><br>"
+                        f"{ui.chip(ui.CAT_ICON.get(r['category'], '') + ' ' + (r['category'] or ''))}"
                         f"{ui.chip(r['status'])}<span style='color:{ui.MUTED};font-size:.8rem'> {r['created_at'][:16]}"
                         f"</span></div>", unsafe_allow_html=True)
 
 
 # ================================================================== PLANNER
 def planner():
-    ui.page_header("📅", "Staffing Planner",
+    ui.page_header("Staffing Planner",
                    "The AI predicts how busy each hour will be and recommends the smallest crew that keeps waits short.")
-    day_tab, hour_tab = st.tabs(["📆 Plan the whole day", "🔍 Check one hour in detail"])
+    day_tab, hour_tab = st.tabs(["Plan the day", "Test a specific hour"])
     with day_tab:
         _plan_day()
     with hour_tab:
@@ -110,25 +128,24 @@ def planner():
 
 def _plan_day():
     model = get_model()
-    ui.steps(["Pick the day", "AI plans every hour", "Review the visuals", "Publish to staff"])
-    c1, c2, c3 = st.columns(3)
-    d = c1.date_input("Day to plan", value=date.today(), key="day_date")
-    max_staff = c2.slider("Most counter staff available", 2, 6, int(db.get_setting("max_counter_staff")), key="day_max")
-    p_simple = c3.slider("Simple drinks (%)", 0, 100, int(db.get_setting("service_times")["p_simple"] * 100), 5,
-                         key="day_ps") / 100
+    ui.steps(["Pick the day", "AI plans every hour", "Review", "Publish to staff"])
+    d = st.date_input("Day to plan", value=db.ph_today(), key="day_date")
     slots = slots_for(d)
     if not slots:
         st.warning("Jungle Brew is closed on Sundays. Pick another day.")
         return
     cust, src = expected_customers(d, slots)
-    with st.expander("👥 Expected customers per hour (edit if you expect a promo or a slow day)"):
+    with st.expander("Expected customers per hour (edit if you expect a promo or a slow day)"):
         df = pd.DataFrame({"Hour": slots, "Customers": [cust[s] for s in slots], "Source": [src[s] for s in slots]})
-        edited = st.data_editor(df, hide_index=True, disabled=["Hour", "Source"], width="stretch", key="day_edit")
-        cust = dict(zip(edited.Hour, edited.Customers))
+        edited = st.data_editor(df, hide_index=True, disabled=["Hour", "Source"], width="stretch", key=f"edit_{d}",
+                                column_config={"Customers": st.column_config.NumberColumn(min_value=1, max_value=150,
+                                                                                          step=1)})
+        cust = {h: int(c) if pd.notna(c) else cust[h] for h, c in zip(edited.Hour, edited.Customers)}
+    st.caption(f"Uses the café defaults in Settings (up to {max_staff()} counter staff per hour).")
 
-    if st.button("✨ Generate AI plan for the day", type="primary", key="day_go"):
-        with st.spinner("The AI is planning every hour and checking each one with the simulator..."):
-            rows = plan_day(model, slots, cust, base_condition(p_simple), max_staff)
+    if st.button("Generate AI plan for the day", icon=":material/auto_awesome:", type="primary", key="day_go"):
+        with st.spinner("The AI is planning every hour and double-checking each one..."):
+            rows = plan_day(model, slots, cust, base_condition(), max_staff())
             insight, provider = explain_day(d.strftime("%A, %B %d"), rows)
         st.session_state.day_result = {"date": str(d), "rows": rows, "insight": insight, "provider": provider}
 
@@ -139,11 +156,11 @@ def _plan_day():
     st.divider()
     ui.ai_card("AI plan summary", res["provider"], ins["headline"], [ins["peak"]] + list(ins["actions"]))
 
-    st.markdown("#### 🚦 How busy each hour will be (with the recommended crew)")
-    st.plotly_chart(charts.day_strip(rows), width="stretch", config={"displayModeBar": False})
+    st.markdown("#### How busy each hour will be (with the recommended crew)")
+    ui.plain_chart(charts.day_strip(rows))
     ui.legend()
-    st.markdown("#### 👥 Recommended crew vs. expected customers")
-    st.plotly_chart(charts.day_chart(rows), width="stretch", config={"displayModeBar": False})
+    st.markdown("#### Recommended crew vs. expected customers")
+    ui.plain_chart(charts.day_chart(rows))
 
     peak = max(rows, key=lambda r: r["customers"])
     a, b, c = st.columns(3)
@@ -152,120 +169,157 @@ def _plan_day():
     with b:
         ui.kpi("Most staff needed", max(r["cashiers"] + r["baristas"] for r in rows), "counter staff at one time")
     with c:
-        ui.kpi("Hours that reach Okay", f"{sum(r['level'] == 'Okay' for r in rows)} / {len(rows)}",
+        ui.kpi("Hours with short waits", f"{sum(r['level'] == 'Okay' for r in rows)} / {len(rows)}",
                "with the available staff", color=ui.LEVEL_COLOR["Okay"])
-    with st.expander("📋 Hour-by-hour table"):
+    with st.expander("Hour-by-hour table"):
         t = pd.DataFrame(rows)
-        t["Crew"] = t.apply(lambda r: "🧾" * r.cashiers + " " + "☕" * r.baristas, axis=1)
+        t["Cashiers"], t["Baristas"] = t.cashiers, t.baristas
         t["Level"] = t.level.map(lambda l: f"{ui.LEVEL_ICON[l]} {l}")
+        t["AI confidence"] = t.confidence.map(lambda p: f"{p:.0%}")
         st.dataframe(t.rename(columns={"slot": "Hour", "customers": "Customers", "wait": "Expected wait (min)"})
-                     [["Hour", "Customers", "Crew", "Level", "Expected wait (min)"]], hide_index=True, width="stretch")
+                     [["Hour", "Customers", "Cashiers", "Baristas", "Level", "Expected wait (min)", "AI confidence"]],
+                     hide_index=True, width="stretch")
     if not all(r["reached"] for r in rows):
-        st.warning("Some hours cannot reach 'Okay' even with all available staff. Consider extra help or a simpler menu.")
-    if st.button("📢 Publish this plan to staff", type="primary", key="day_pub"):
+        st.warning("Some hours cannot reach short waits even with all available staff. "
+                   "Consider extra help or a simpler menu for those hours.")
+    if st.button("Publish this plan to staff", icon=":material/campaign:", type="primary", key="day_pub"):
         db.save_plans(rows, res["date"], st.session_state.user["email"])
-        st.success("Published! Staff will see it on their 'My Shift Today' page.")
+        st.success("Published. Staff will see it on their 'My Shift Today' page.")
 
 
 def _plan_hour():
     model = get_model()
-    ui.steps(["Describe the hour", "AI predicts", "AI recommends", "Simulator double-checks", "AI explains"])
+    st.caption("Use this to test one hour, for example during a promo or when someone is absent.")
     c1, c2, c3 = st.columns(3)
-    d = c1.date_input("Date", value=date.today(), key="hr_date")
+    d = c1.date_input("Date", value=db.ph_today(), key="hr_date")
     slots = slots_for(d)
     if not slots:
         st.warning("Jungle Brew is closed on Sundays.")
         return
-    slot = c1.selectbox("Time slot", slots, index=min(4, len(slots) - 1), key="hr_slot")
+    slot = c1.selectbox("Hour", slots, index=current_slot_index(slots), key=f"hr_slot_{d}")
     cust, src = expected_customers(d, [slot])
-    customers = c2.number_input("Expected customers this hour", 1, 100, cust[slot], key="hr_cust")
+    customers = c2.number_input("Expected customers this hour", 1, 150, cust[slot], key=f"hr_cust_{d}_{slot}")
     c2.caption(f"Suggested from {src[slot]}")
-    max_staff = c2.slider("Most counter staff available", 2, 6, int(db.get_setting("max_counter_staff")), key="hr_max")
-    cur_c = c3.number_input("Current plan: cashiers 🧾", 1, 2, 1, key="hr_c")
-    cur_b = c3.number_input("Current plan: baristas ☕", 1, 4, 1, key="hr_b")
+    cur_c = c3.number_input("Cashiers you have now", 1, 2, 1, key="hr_c")
+    cur_b = c3.number_input("Baristas you have now", 1, 4, 1, key="hr_b")
 
-    if st.button("✨ Ask BrewStaffAI", type="primary", key="hr_go"):
+    if st.button("Test this hour", icon=":material/science:", key="hr_go"):
         cond = {**base_condition(), "arr_rate": customers / 60}
-        with st.spinner("AI is analyzing..."):
+        with st.spinner("The AI is checking every crew option..."):
             cur_level, cur_probs = predict(model, {**cond, "num_cashier": cur_c, "num_barista": cur_b})
             cur_sim = sim_check(cond, cur_c, cur_b)
-            best, reached, sim, opts = recommend(model, cond, max_staff)
+            best, reached, sim, opts = recommend(model, cond, max_staff())
             ctx = dict(slot=slot, day=d.strftime("%A"), customers=customers, p_simple=cond["p_simple"],
                        cur_c=cur_c, cur_b=cur_b, cur_level=cur_level, cur_wait=cur_sim["avg_wait"],
                        cur_walkout=cur_sim["balk_rate"], rec_c=best["cashiers"], rec_b=best["baristas"],
                        rec_level=best["level"], rec_conf=best["p_okay"], rec_wait=sim["avg_wait"],
                        rec_walkout=sim["balk_rate"], rec_util=sim["util_barista"], reached=reached)
             insight, provider = explain_hour(ctx)
-        st.session_state.hour_result = dict(ctx=ctx, cur_probs=cur_probs, best=best, sim=sim, opts=opts,
-                                            insight=insight, provider=provider, cur_sim=cur_sim, date=str(d))
+        st.session_state.hour_result = dict(ctx=ctx, cur_probs=cur_probs, best=best, opts=opts,
+                                            insight=insight, provider=provider, date=str(d))
 
     res = st.session_state.get("hour_result")
     if not res:
         return
     ctx, ins = res["ctx"], res["insight"]
     st.divider()
-    ui.ai_card("AI Insight", res["provider"], ins["headline"], list(ins["why"]),
-               f"<div style='margin-top:10px'>{ui.chip('⚠️ If you keep the current plan: ' + ins['risk'])}</div>"
-               f"<div>{ui.chip('💡 Tip: ' + ins['tip'])}</div>")
+    ui.ai_card("AI Insight", res["provider"], ins["headline"], None,
+               f"<div>{ui.chip('Tip: ' + str(ins['tip']))}</div>")
 
-    left, right = st.columns(2, gap="large")
-    for col, title, c, b, lvl, wait, walk in (
-            (left, "Current plan", ctx["cur_c"], ctx["cur_b"], ctx["cur_level"], ctx["cur_wait"], ctx["cur_walkout"]),
-            (right, "✨ AI recommendation", ctx["rec_c"], ctx["rec_b"], ctx["rec_level"], ctx["rec_wait"],
-             ctx["rec_walkout"])):
-        with col:
-            with st.container(border=True):
-                st.markdown(f"#### {title}")
-                st.markdown(ui.people(c, b), unsafe_allow_html=True)
-                st.markdown(f"AI prediction: {ui.badge(lvl, '1.05rem')}", unsafe_allow_html=True)
-                st.plotly_chart(charts.wait_gauge(wait, "Expected average wait"), width="stretch",
-                                config={"displayModeBar": False}, key=f"g_{title}")
-                st.caption(f"🚶 About {walk:.0%} of customers would walk out because of the line.")
+    left, right = st.columns([1, 1.6], gap="large")
+    with left:
+        with st.container(border=True):
+            st.markdown("**Recommended crew**")
+            st.markdown(ui.people(ctx["rec_c"], ctx["rec_b"]), unsafe_allow_html=True)
+            st.markdown(ui.badge(ctx["rec_level"], "1.05rem"), unsafe_allow_html=True)
+            ui.plain_chart(charts.wait_gauge(ctx["rec_wait"], "Expected average wait"), key="hr_gauge")
+    with right:
+        ui.plain_chart(charts.options_bar(res["opts"], res["best"]), key="hr_opts")
 
-    st.markdown("#### 🎯 How sure is the AI about the current plan?")
-    st.plotly_chart(charts.confidence_bar(res["cur_probs"]), width="stretch", config={"displayModeBar": False})
-    st.plotly_chart(charts.options_bar(res["opts"], res["best"]), width="stretch", config={"displayModeBar": False})
-    with st.expander("🧠 How did the AI decide? (simple explanation)"):
+    with st.expander("Details for the panel"):
+        a, b = st.columns(2)
+        with a:
+            st.markdown("**Your current crew**")
+            st.markdown(ui.people(ctx["cur_c"], ctx["cur_b"]), unsafe_allow_html=True)
+            st.markdown(f"{ui.badge(ctx['cur_level'])} · about **{ctx['cur_wait']:.1f} min** wait · "
+                        f"{ctx['cur_walkout']:.0%} of customers may walk out", unsafe_allow_html=True)
+        with b:
+            st.markdown("**Recommended crew**")
+            st.markdown(ui.people(ctx["rec_c"], ctx["rec_b"]), unsafe_allow_html=True)
+            st.markdown(f"{ui.badge(ctx['rec_level'])} · about **{ctx['rec_wait']:.1f} min** wait · "
+                        f"{ctx['rec_walkout']:.0%} of customers may walk out · AI confidence "
+                        f"**{ctx['rec_conf']:.0%}**", unsafe_allow_html=True)
+        st.markdown("**How sure the AI is about your current crew**")
+        ui.plain_chart(charts.confidence_bar(res["cur_probs"]), key="hr_conf")
+        st.markdown("**Why (AI explanation)**")
+        for w in ins["why"]:
+            st.markdown(f"- {esc(str(w))}")
+        st.markdown(f"**If you keep the current crew:** {esc(str(ins['risk']))}")
         st.markdown(f"""
-1. **Prediction (Decision Tree):** the AI learned from 4,000 simulated café hours. For {ctx['customers']} customers,
-   it predicted every crew option above as Okay, Congested, or Overloaded.
-2. **Recommendation:** it picked the **smallest crew** predicted as **Okay** →
-   {ctx['rec_c']} cashier(s) + {ctx['rec_b']} barista(s).
-3. **Double-check (Simulator):** the queueing simulator ran that crew 10 times → about **{ctx['rec_wait']:.1f} min** wait.
-4. **Explanation (Gemini):** the language model turned these numbers into the short advice above.
+**How the AI decided**
+1. The AI model learned from 4,000 practice café hours. It predicted every crew option above as Okay, Congested, or Overloaded.
+2. It picked the **smallest crew** predicted as Okay → {ui.crew_text(ctx['rec_c'], ctx['rec_b'])}.
+3. That crew was **double-checked** with the queueing simulator → about **{ctx['rec_wait']:.1f} min** wait.
+4. Gemini turned these numbers into the short advice above.
 """)
-    if st.button("📢 Publish this hour to staff", key="hr_pub"):
+    if st.button("Publish this hour to staff", icon=":material/campaign:", key="hr_pub"):
         existing = [{"slot": p["time_slot"], "customers": p["customers"], "cashiers": p["cashiers"],
-                     "baristas": p["baristas"], "level": p["predicted_level"], "wait": p["expected_wait"]}
+                     "baristas": p["baristas"], "level": p["predicted_level"], "wait": p["expected_wait"] or 0,
+                     "insight": p["ai_insight"] or ""}
                     for p in db.get_plans(res["date"]) if p["time_slot"] != ctx["slot"]]
         existing.append({"slot": ctx["slot"], "customers": ctx["customers"], "cashiers": ctx["rec_c"],
                          "baristas": ctx["rec_b"], "level": ctx["rec_level"], "wait": round(ctx["rec_wait"], 1),
-                         "insight": ins["headline"]})
+                         "insight": str(ins["headline"])})
         db.save_plans(sorted(existing, key=lambda r: r["slot"]), res["date"], st.session_state.user["email"])
         st.success("Published to staff.")
 
 
 # ================================================================== REPORTS
-def reports():
-    ui.page_header("🗂️", "Staff Reports",
-                   "What your team reported about their shifts. The AI tags every report and can summarize the week.")
-    all_reps = db.get_reports()
-    if not all_reps:
-        st.info("No reports yet. Staff can send them from their 'End-of-Shift Report' and 'Report an Incident' pages.")
-        return
-    f1, f2, f3, f4 = st.columns(4)
-    days = f1.selectbox("Period", [7, 14, 30, 365], format_func=lambda x: f"Last {x} days" if x < 365 else "All time")
-    sent = f2.multiselect("Feeling", ["Positive", "Neutral", "Negative"], placeholder="All")
-    cats = f3.multiselect("Topic", sorted({r["category"] for r in all_reps}), placeholder="All")
-    status = f4.selectbox("Status", ["All", "Open", "Resolved"])
-    reps = [r for r in db.get_reports(days=days)
-            if (not sent or r["sentiment"] in sent) and (not cats or r["category"] in cats)
-            and (status == "All" or r["status"] == status)]
-    if not reps:
-        st.warning("No reports match these filters.")
-        return
-    df = pd.DataFrame(reps)
+def _summary_csv(summary, provider, period):
+    rows = [{"section": "Headline", "item": summary.get("headline", ""), "count": ""}]
+    rows += [{"section": "Top issue", "item": i.get("issue", ""), "count": i.get("count", "")}
+             for i in summary.get("top_issues", []) if isinstance(i, dict)]
+    rows += [{"section": "Went well", "item": g, "count": ""} for g in summary.get("went_well", [])]
+    rows += [{"section": "Suggested action", "item": a, "count": ""} for a in summary.get("actions", [])]
+    rows += [{"section": "Made by", "item": provider or "Basic summary (AI unavailable)", "count": ""},
+             {"section": "Period", "item": period, "count": ""},
+             {"section": "Generated", "item": db.now(), "count": ""}]
+    return pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
 
+
+def reports():
+    ui.page_header("Staff Reports",
+                   "What your team reported about their shifts. The AI tags every report and can summarize the week.")
+    if db.count_new_reports():
+        st.session_state.fresh_ids = {r["id"] for r in db.get_reports() if not r["seen_by_manager"]}
+        db.mark_reports_seen()
+        st.rerun()
+    fresh = st.session_state.get("fresh_ids", set())
+    me = st.session_state.user["email"]
+
+    f1, f2, f3, f4 = st.columns(4)
+    status = f1.selectbox("Status", ["All", "Open", "Resolved", "Archived"])
+    days = f2.selectbox("Period", [7, 14, 30, 365], format_func=lambda x: f"Last {x} days" if x < 365 else "All time")
+    sent = f3.multiselect("Feeling", ["Positive", "Neutral", "Negative"], placeholder="All")
+    cats = f4.multiselect("Topic", CATEGORIES, placeholder="All")
+    archived = status == "Archived"
+    reps = [r for r in db.get_reports(days=None if archived else days, archived=archived)
+            if (not sent or r["sentiment"] in sent) and (not cats or r["category"] in cats)
+            and (status in ("All", "Archived") or r["status"] == status)]
+    if not reps:
+        st.info("No archived reports." if archived else
+                "No reports match these filters. Staff send them from 'End-of-Shift Report' and 'Report an Incident'.")
+        return
+    names = staff_lookup()
+
+    if archived:
+        st.caption(f"Archived reports are hidden from charts and are deleted for good {db.ARCHIVE_DAYS} days "
+                   "after archiving.")
+        for r in reps:
+            _archived_card(r, names, me)
+        return
+
+    df = pd.DataFrame(reps)
     a, b, c, d = st.columns(4)
     with a:
         ui.kpi("Reports", len(df))
@@ -277,89 +331,145 @@ def reports():
         ui.kpi("Open issues", int((df.status == "Open").sum()), color=ui.AMBER)
 
     g1, g2, g3 = st.columns(3)
-    g1.plotly_chart(charts.sentiment_donut(df), width="stretch", config={"displayModeBar": False})
-    g2.plotly_chart(charts.category_bar(df), width="stretch", config={"displayModeBar": False})
-    g3.plotly_chart(charts.trend(df), width="stretch", config={"displayModeBar": False})
+    with g1:
+        ui.plain_chart(charts.sentiment_donut(df))
+    with g2:
+        ui.plain_chart(charts.category_bar(df))
+    with g3:
+        ui.plain_chart(charts.trend(df))
 
-    if st.button("✨ Generate AI weekly summary", type="primary"):
+    period = f"last {days} days" if days < 365 else "all time"
+    if st.button("Generate AI weekly summary", icon=":material/auto_awesome:", type="primary"):
         with st.spinner("The AI is reading the reports..."):
-            st.session_state.week = weekly_summary(reps, db.staff_names())
-    if st.session_state.get("week") and st.session_state.week[0]:
-        s, provider = st.session_state.week
-        issues = "".join(ui.chip(f"🔴 {i.get('issue')} · {i.get('count', '')}") for i in s.get("top_issues", []))
-        good = "".join(ui.chip(f"🟢 {g}") for g in s.get("went_well", []))
+            st.session_state.week = (*weekly_summary(reps, db.staff_names()), period)
+    week = st.session_state.get("week")
+    if week and week[0]:
+        s, provider, wperiod = week
+        issues = "".join(ui.chip(f"{i.get('issue')} · {i.get('count', '')}")
+                         for i in s.get("top_issues", []) if isinstance(i, dict))
+        good = "".join(ui.chip(g) for g in s.get("went_well", []))
         ui.ai_card("AI Weekly Summary", provider, s["headline"], list(s.get("actions", [])),
                    f"<div style='margin-top:10px'><b>Top issues</b><br>{issues}</div>"
                    f"<div style='margin-top:8px'><b>What went well</b><br>{good}</div>")
+        st.download_button("Download summary (CSV)", _summary_csv(s, provider, wperiod),
+                           file_name=f"brewstaff_weekly_summary_{db.ph_today()}.csv", mime="text/csv",
+                           icon=":material/download:")
 
-    st.markdown("#### 📋 All reports")
-    st.download_button("⬇️ Download as Excel-friendly CSV", df.to_csv(index=False).encode("utf-8"),
-                       file_name=f"brewstaff_reports_{date.today()}.csv", mime="text/csv")
-    names = {u["email"]: u["full_name"] for u in db.list_users()}
+    head, dl = st.columns([3, 1], vertical_alignment="bottom")
+    head.markdown("#### All reports")
+    export = df.drop(columns=[c for c in df.columns if c.startswith("check_") or c in ("checked_by", "checked_at",
+                                                                                         "seen_by_manager",
+                                                                                         "reply_seen")])
+    dl.download_button("Download reports (CSV)", export.to_csv(index=False).encode("utf-8"),
+                       file_name=f"brewstaff_reports_{db.ph_today()}.csv", mime="text/csv",
+                       icon=":material/download:", width="stretch")
     for r in reps:
-        with st.container(border=True):
-            top, act = st.columns([5, 1])
-            with top:
-                st.markdown(f"{ui.SENT_ICON.get(r['sentiment'], '')} **{r['ai_summary'] or r['text']}**")
-                st.markdown(ui.chip(f"{ui.CAT_ICON.get(r['category'], '')} {r['category']}") +
-                            ui.chip("📝 End of shift" if r["report_type"] == "end_of_shift" else "⚠️ Incident") +
-                            ui.chip(f"👤 {names.get(r['user_email'], r['user_email'])}") +
-                            ui.chip(f"🕒 {r['created_at'][:16]}") +
-                            (ui.chip("🟢 Resolved") if r["status"] == "Resolved" else ui.chip("🟠 Open")),
+        _report_card(r, names, me, r["id"] in fresh)
+
+
+def _chips(r, names, is_new=False):
+    return ((ui.chip("New", "bs-new") if is_new else "") +
+            ui.chip(f"{ui.CAT_ICON.get(r['category'], '')} {r['category']}") +
+            ui.chip("End of shift" if r["report_type"] == "end_of_shift" else "Incident") +
+            ui.chip(names.get(r["user_email"], r["user_email"])) +
+            ui.chip(r["created_at"][:16]) +
+            (ui.chip("Edited") if r["edited_at"] else "") +
+            ui.chip("Resolved" if r["status"] == "Resolved" else "Open"))
+
+
+def _report_card(r, names, me, is_new):
+    with st.container(border=True):
+        top, act = st.columns([5, 1])
+        with top:
+            st.markdown(f"{ui.SENT_ICON.get(r['sentiment'], '')} **{esc(r['ai_summary'] or r['text'] or '')}**",
+                        unsafe_allow_html=True)
+            st.markdown(_chips(r, names, is_new), unsafe_allow_html=True)
+            if r["report_type"] == "end_of_shift" and r["predicted_level"]:
+                st.markdown(f"{r['time_slot']} · {r['customers']} customers · staff felt "
+                            f"{ui.badge(r['reported_level'])} · AI predicted {ui.badge(r['predicted_level'])}",
                             unsafe_allow_html=True)
-                if r["report_type"] == "end_of_shift" and r["predicted_level"]:
-                    st.markdown(f"{r['time_slot']} · {r['customers']} customers · staff felt "
-                                f"{ui.badge(r['reported_level'])} · AI predicted {ui.badge(r['predicted_level'])}",
-                                unsafe_allow_html=True)
-                with st.expander("Original text"):
-                    st.write(r["text"] or "—")
-                    st.caption(f"Tagged by {r['ai_provider'] or 'offline keyword fallback'}")
-            with act:
-                if r["status"] == "Open":
-                    if st.button("✅ Resolve", key=f"res{r['id']}", width="stretch"):
-                        db.set_status(r["id"], "Resolved"); st.rerun()
-                elif st.button("↩️ Reopen", key=f"reo{r['id']}", width="stretch"):
-                    db.set_status(r["id"], "Open"); st.rerun()
+            if r["reply"]:
+                st.markdown(f"<div class='bs-reply'><b>Your reply</b> · {r['replied_at'][:16]}<br>"
+                            f"{esc(r['reply'])}</div>", unsafe_allow_html=True)
+        with act:
+            if r["status"] == "Open":
+                if st.button("Resolve", key=f"res{r['id']}", icon=":material/check:", width="stretch"):
+                    db.set_status(r["id"], "Resolved", by=me)
+                    st.rerun()
+            elif st.button("Reopen", key=f"reo{r['id']}", icon=":material/undo:", width="stretch"):
+                db.set_status(r["id"], "Open", by=me)
+                st.rerun()
+        with st.expander("Original text, reply, archive"):
+            st.write(r["text"] or "—")
+            st.caption(f"Tagged by {r['ai_provider'] or 'basic keyword tagging (AI unavailable)'}")
+            reply = st.text_area("Reply to the staff member", value=r["reply"] or "", max_chars=500,
+                                 key=f"rep{r['id']}", placeholder="Example: Thanks! We'll add a second barista at noon.")
+            c1, c2 = st.columns(2)
+            if c1.button("Send reply", key=f"rep_btn{r['id']}", icon=":material/send:", width="stretch"):
+                if reply.strip():
+                    db.reply_to_report(r["id"], reply, me)
+                    st.toast("Reply sent. The staff member will see it in My Reports.")
+                    st.rerun()
+                else:
+                    st.error("Please write a reply first.")
+            reason = c2.text_input("Reason for archiving", key=f"arc_r{r['id']}", max_chars=200,
+                                   placeholder="Example: duplicate, test report")
+            if c2.button("Archive", key=f"arc{r['id']}", icon=":material/archive:", width="stretch"):
+                if reason.strip():
+                    db.archive_report(r["id"], reason, me)
+                    st.rerun()
+                else:
+                    st.error("Please give a reason for archiving.")
+
+
+def _archived_card(r, names, me):
+    with st.container(border=True):
+        st.markdown(f"{ui.SENT_ICON.get(r['sentiment'], '')} **{esc(r['ai_summary'] or r['text'] or '')}**",
+                    unsafe_allow_html=True)
+        st.markdown(_chips(r, names), unsafe_allow_html=True)
+        st.caption(f"Archived {r['archived_at'][:16]} by {names.get(r['archived_by'], r['archived_by'])} · "
+                   f"Reason: {r['archive_reason']} · Deletes automatically on {db.purge_date(r):%B %d, %Y}")
+        c1, c2, _ = st.columns([1, 1, 3])
+        if c1.button("Restore", key=f"rst{r['id']}", icon=":material/unarchive:", width="stretch"):
+            db.restore_report(r["id"], me)
+            st.rerun()
+        confirm = c2.checkbox("Confirm delete", key=f"delok{r['id']}")
+        if c2.button("Delete now", key=f"del{r['id']}", icon=":material/delete:", width="stretch",
+                     disabled=not confirm):
+            db.delete_report(r["id"], me)
+            st.rerun()
 
 
 # ================================================================== HOW THE AI WORKS
 def how_ai_works():
-    ui.page_header("🧠", "How the AI Works",
+    ui.page_header("How the AI Works",
                    "A simple, visual explanation of the two AI parts of BrewStaffAI and how accurate they are.")
-    steps = [("🧪", "Simulator", "The COMP 014 queueing simulator plays 4,000 practice café hours."),
-             ("🏷️", "Labels", "Each hour is labeled Okay, Congested, or Overloaded by its average wait."),
-             ("🌳", "Decision Tree", "The AI learns rules like “IF barista workload is high → Overloaded”."),
-             ("📅", "Recommendation", "It picks the smallest crew predicted as Okay, then the simulator checks it."),
-             ("💬", "Gemini", "A language model explains the result and reads staff reports.")]
+    steps = [("1", "Simulator", "The COMP 014 queueing simulator plays 4,000 practice café hours."),
+             ("2", "Labels", "Each hour is labeled Okay, Congested, or Overloaded by its average wait."),
+             ("3", "Decision Tree", "The AI learns rules like “IF barista workload is high → Overloaded”."),
+             ("4", "Recommendation", "It picks the smallest crew predicted as Okay, then double-checks it."),
+             ("5", "Gemini", "A language model explains the result and reads staff reports.")]
     cols = st.columns(len(steps))
-    for col, (ic, t, d) in zip(cols, steps):
-        col.markdown(f"<div class='bs-card' style='text-align:center'><div style='font-size:2rem'>{ic}</div>"
+    for col, (n, t, d) in zip(cols, steps):
+        col.markdown(f"<div class='bs-card' style='text-align:center'><div class='bs-step' style='justify-content:"
+                     f"center;margin:0 0 6px'><span class='dot'>{n}</span></div>"
                      f"<b>{t}</b><div class='bs-kpi-sub' style='margin-top:6px'>{d}</div></div>",
                      unsafe_allow_html=True)
-    m = json.load(open(os.path.join(HERE, "model", "metrics.json")))
+    with open(os.path.join(HERE, "model", "metrics.json")) as f:
+        m = json.load(f)
     st.write("")
     a, b, c = st.columns(3)
-    a.plotly_chart(charts.accuracy_gauge(m["test_accuracy"], m["baseline_accuracy"]), width="stretch",
-                   config={"displayModeBar": False})
-    b.plotly_chart(charts.confusion(m["confusion_matrix"]), width="stretch", config={"displayModeBar": False})
-    c.plotly_chart(charts.importance(m["feature_importance"]), width="stretch", config={"displayModeBar": False})
+    with a:
+        ui.plain_chart(charts.accuracy_gauge(m["test_accuracy"], m["baseline_accuracy"]))
+    with b:
+        ui.plain_chart(charts.confusion(m["confusion_matrix"]))
+    with c:
+        ui.plain_chart(charts.importance(m["feature_importance"]))
     st.markdown(f"""
 <div class='bs-card'><b>In simple words:</b> out of {m['test_rows']} café hours the AI had never seen,
 it guessed the right congestion level <b>{m['test_accuracy']:.1%}</b> of the time. Always guessing “Okay” would only be
 right {m['baseline_accuracy']:.0%} of the time. The AI pays the most attention to <b>barista workload</b>,
 because the barista station is the café's main bottleneck.</div>""", unsafe_allow_html=True)
-
-    st.markdown("#### 🔎 Real-world check: AI prediction vs. what staff felt")
-    eos = [r for r in db.get_reports() if r["report_type"] == "end_of_shift" and r["predicted_level"]]
-    if not eos:
-        st.info("This fills in during the pilot week, from staff end-of-shift reports.")
-        return
-    match = sum(r["predicted_level"] == r["reported_level"] for r in eos)
-    l, r_ = st.columns([1, 1.4])
-    l.plotly_chart(charts.donut(["Agreed", "Different"], [match, len(eos) - match],
-                                [ui.LEVEL_COLOR["Okay"], ui.AMBER], f"{match / len(eos):.0%}<br>agree"),
-                   width="stretch", config={"displayModeBar": False})
-    t = pd.DataFrame(eos)[["report_date", "time_slot", "customers", "reported_level", "predicted_level"]]
-    r_.dataframe(t.rename(columns={"report_date": "Date", "time_slot": "Hour", "customers": "Customers",
-                                   "reported_level": "Staff felt", "predicted_level": "AI predicted"}),
-                 hide_index=True, width="stretch")
+    st.write("")
+    st.page_link(st.session_state.pages["pilot"], label="See how the AI did in real shifts (Pilot Results)",
+                 icon=":material/arrow_forward:")

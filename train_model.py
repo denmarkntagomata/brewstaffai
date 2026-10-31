@@ -1,5 +1,5 @@
 """
-train_model.py — trains the BrewStaffAI congestion classifier (Objective 2)
+train_model.py - trains the BrewStaffAI congestion classifier (Objective 2)
 Algorithm: Decision Tree (scikit-learn). Easy to explain: it learns IF-THEN rules
 such as "IF barista_load > 0.93 THEN Overloaded".
 

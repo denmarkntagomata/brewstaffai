@@ -1,75 +1,98 @@
-# BrewStaffAI — Version 2
+# BrewStaffAI — Version 4
 
 AI-Based Staffing Recommendation System for Jungle Brew Café, Parañaque City.
 Internal system: **Manager and Staff only.**
 
-## What's new in v2
+## What's new in v4
 
 | Area | What changed |
 |---|---|
-| 🔐 Login | Split screen with the Jungle Brew storefront photo and round logo. Choose **Staff** or **Manager**, then log in with your work email. |
-| 🛡️ Security | Only `@junglebrewpq.com` emails · strong passwords (12+ characters, upper, lower, number, symbol) with a live checklist · 5 wrong tries = 5-minute lock · auto logout after 30 minutes · no default passwords · new staff must set their own password on first login |
-| 🧭 Easier to use | Grouped sidebar menu with icons · every page says what it's for · numbered steps · large buttons |
-| 📊 Visual AI results | Hour-by-hour color strip, crew vs. customers chart, wait-time gauges, confidence bar, chart of every staffing option, sentiment donut, topic chart, accuracy gauge, confusion matrix |
-| ⚙️ Settings | One page with tabs: My account · Team accounts · Café defaults · AI services · Security |
+| Stay logged in | Refreshing the page no longer logs you out. A secure cookie keeps you in for up to 30 minutes of no activity. Logging out ends it right away. |
+| Refresh button | Top right of every page: loads the latest data without logging out. |
+| Staff: edit or delete | Staff can fix or delete their own report within 24 hours, while it is open and before the manager replies. Every change is in the activity log. |
+| Manager reply | The manager can reply to any report. The staff member sees it in **My Reports**. |
+| Archive | The manager archives a report with a reason (logged). Archived reports are hidden from charts, can be restored, and are **deleted automatically 30 days after archiving**. |
+| Notification badges | Sidebar shows **Staff Reports (2)** for new reports and **My Reports (1)** for new replies. |
+| Weekly summary as CSV | The AI weekly summary can be downloaded as a CSV file (no PDF). |
+| Pilot Results page | Day-by-day agreement between the AI prediction and what staff felt, with charts and CSV downloads. |
+| Tagging accuracy check | The team hand-labels reports without seeing the AI tags. The app computes the match rate against the 80% target (goal: 50 reports). |
+| Clear errors | Database problems show plain messages, for example "Can't connect to the database: wrong password". |
+| Setup code | On the online app, the first manager account can only be created with the `SETUP_CODE` from Secrets. |
+| Simpler screens | Planner uses the café defaults from Settings (no sliders). "Test a specific hour" shows the gauge and options chart; the rest is under **Details for the panel**. Plain words, cleaner icons. |
 
-## First run (important)
+**Upgrading from v3:** copy your `.streamlit/secrets.toml` into this folder and add a `SETUP_CODE` line (see `.streamlit/secrets.toml.example`). The database updates itself on first start; existing accounts and reports are kept.
+
+## First run
 
 ```
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-1. Because there are no default passwords, the first screen is **First-time setup**. Create the manager account with a `@junglebrewpq.com` email and a strong password.
+1. With no accounts yet, the first screen is **First-time setup**. Create the manager account with a `@junglebrewpq.com` email and a strong password. (Online, you also need the `SETUP_CODE`.)
 2. Log in as **Manager**.
-3. Go to **Settings → Team accounts → Add a team member** to create staff accounts. The app shows a **one-time temporary password**: copy it and give it to the staff member privately.
+3. **Settings → Team accounts → Add a team member** creates staff accounts. Copy the one-time temporary password and give it to the person privately.
 4. The staff member logs in as **Staff** and must choose their own password right away.
-
-Your v1 database (with `staff1`, `manager`) is automatically backed up as `data/brewstaff_v1_backup.db` and not used anymore.
-
-## AI keys
-
-Keep your existing `.streamlit/secrets.toml` from v1 (copy it into this folder's `.streamlit` folder). Check the keys with:
-```
-python test_keys.py
-```
-You can also check them in **Settings → AI services → Test AI connection**.
 
 ## Pages
 
 **Manager**
-- 🏠 **Dashboard:** today at a glance (plan, open issues, reports, AI accuracy vs. real shifts)
-- 📅 **Staffing Planner**
-  - *Plan the whole day:* the AI plans every hour, then you publish to staff
-  - *Check one hour in detail:* prediction, recommendation, simulation check, and AI Insight
-- 🗂️ **Staff Reports:** AI-tagged reports, charts, AI weekly summary, resolve issues, CSV download
-- 🧠 **How the AI Works:** a visual explanation for the panel (pipeline, accuracy, what the AI looks at, real-world check)
-- ⚙️ **Settings**
+- **Dashboard:** today's plan, open issues, latest reports
+- **Staffing Planner**
+  - *Plan the day:* the AI plans every hour; publish it to staff
+  - *Test a specific hour:* try one hour (promo, someone absent)
+- **Staff Reports:** AI-tagged reports, charts, weekly summary (CSV), resolve, reply, archive
+- **Pilot Results:** AI vs. staff agreement by day, and the tagging accuracy check
+- **How the AI Works:** visual explanation for the panel
+- **Settings:** account, team, café defaults, AI services, data & backup
 
 **Staff**
-- 🏠 **My Shift Today:** the published crew plan and quick buttons
-- 📝 **End-of-Shift Report:** the AI tags it and compares "you felt" vs. "AI predicted"
-- ⚠️ **Report an Incident**
-- 📄 **My Reports**
-- ⚙️ **Settings:** change password
+- **My Shift Today:** the published crew plan and quick buttons
+- **End-of-Shift Report** and **Report an Incident**
+- **My Reports:** tags, manager replies, edit or delete within 24 hours
+- **Settings:** change password
+
+## Security
+
+| Protection | How it works |
+|---|---|
+| Company emails only | Only **@junglebrewpq.com** addresses; personal emails are refused |
+| Strong passwords | 12+ characters with uppercase, lowercase, number, symbol; common words blocked |
+| Encrypted storage | Passwords saved as salted PBKDF2-SHA256 hashes (200,000 rounds), never as plain text |
+| Lockout | 5 wrong tries lock the account for 5 minutes |
+| Auto logout | After 30 minutes of no activity |
+| Login cookie | Holds a random token only; the database stores just its SHA-256 hash. Ends on logout, password reset, or deactivation |
+| Role check | Staff cannot open manager pages; the login also checks the chosen role |
+| No default passwords | First manager is created with the setup code; staff get one-time temporary passwords |
+| Safe display | Text typed by users or returned by the AI is escaped before it is shown |
+| AI privacy | Staff names removed before text goes to Gemini/Groq; keys kept out of the code |
+| Shared cloud database | Neon PostgreSQL over SSL; the connection string is kept in Secrets |
+| Activity log | Logins, account changes, report edits, replies, archives, deletes, and exports are recorded |
+
+## AI keys
+
+Check them with `python test_keys.py` or in **Settings → AI services → Test AI connection**.
+Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the app still works.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `app.py` | Start here: login check, sidebar menu, auto logout |
-| `login_page.py` | Split-screen login and first-time setup |
-| `auth.py` | Security rules (email domain, password strength, lockout, timeout) |
-| `db.py` | SQLite database (users, reports, plans, settings) |
-| `pages_manager.py` / `pages_staff.py` / `settings_page.py` | The pages |
-| `ui.py` / `charts.py` | Styling and infographic charts |
+| `app.py` | Start here: login check, sidebar menu, badges, auto logout, error screen |
+| `login_page.py` | Login screen and first-time setup |
+| `session_cookie.py` | Stay logged in after a page refresh |
+| `auth.py` | Email, password, lockout, and timeout rules |
+| `db.py` | Database (Neon PostgreSQL online, SQLite locally) |
+| `pages_manager.py` / `pages_pilot.py` / `pages_staff.py` / `settings_page.py` | The pages |
+| `ui.py` / `charts.py` | Styling and charts |
 | `ai_helper.py` | Gemini (main) / Groq (backup) / offline fallback |
-| `recommender.py` | Decision Tree prediction + staffing recommendation + simulation check |
-| `sim_engine.py`, `generate_dataset.py`, `train_model.py`, `labels.py` | Simulator, dataset, and model training (unchanged from v1) |
-| `assets/` | Jungle Brew logo and storefront photo |
+| `recommender.py` | Decision Tree prediction, recommendation, simulation double-check |
+| `sim_engine.py`, `generate_dataset.py`, `train_model.py`, `labels.py` | Simulator, dataset, and model training |
 
 ## Notes and assumptions
 
-- The hourly customer numbers in **Settings → Café defaults** are placeholders based on the COMP 014 observation (~24 customers/hour at the noon peak). Update them after the re-observation.
-- Every wait-time number uses the same 10 simulation runs, so the gauge, charts, and AI text always agree.
-- Without API keys, AI boxes show "AI service offline · showing a template answer". The app still works.
+- Hourly customer numbers in **Settings → Café defaults** are placeholders from the COMP 014 observation (about 24 customers/hour at the noon peak). Update them after the re-observation.
+- Pilot Results defaults to the pilot week (Nov 21–28, 2026) once it starts; before that it shows the last 7 days. You can pick any dates.
+- The tagging check only uses reports that have text. Editing a report clears its check label, because the AI re-tags it.
+- Archived reports disappear from the staff member's **My Reports** too.
+- If a browser blocks cookies, the app still works; a refresh just asks for the password again.

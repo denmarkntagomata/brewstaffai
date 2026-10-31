@@ -1,5 +1,5 @@
 """
-auth.py — BrewStaffAI account security rules
+auth.py - BrewStaffAI account security rules
   * Only company emails ending in @junglebrewpq.com are allowed.
   * Passwords must be strong (12+ characters, upper, lower, number, symbol).
   * 5 wrong passwords lock the account for 5 minutes.

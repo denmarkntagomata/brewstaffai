@@ -1,6 +1,5 @@
 """
-sim_engine.py — BrewStaffAI headless queueing simulator
-=========================================================
+sim_engine.py - BrewStaffAI headless queueing simulator
 Reused from the group's COMP 014 project (jungle_brew_gui_v5.py, class SimEngine).
 Same model: customers arrive (Poisson), order at the cashier, then wait for the
 barista (simple or complex drink). The Tkinter window, sleeps, and animation are

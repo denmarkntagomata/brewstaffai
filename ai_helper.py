@@ -1,14 +1,11 @@
 """
-ai_helper.py — Generative AI features (Gemini main, Groq backup)
-  explain_hour()      structured "AI Insight" for one time slot (headline, reasons, risk, tip)
-  explain_day()       structured summary of a whole-day staffing plan
-  tag_feedback()      sentiment + category + one-line summary for each staff report
-  weekly_summary()    structured weekly digest (top issues, what went well, actions)
+ai_helper.py - generative AI features (Gemini main, Groq backup, offline fallback)
+  explain_hour()    short insight for one hour (headline, reasons, risk, tip)
+  explain_day()     summary of a whole-day staffing plan
+  tag_feedback()    sentiment + topic + one-line summary for each staff report
+  weekly_summary()  weekly digest (top issues, what went well, actions)
 
-Order: Gemini -> Groq -> offline fallback (so a demo never crashes).
-Gemini is asked to answer in JSON so the app can draw it as cards instead of long text.
-API keys are read from Streamlit secrets or environment variables, never from code.
-Staff names are removed before any text is sent.
+Keys come from Streamlit secrets or environment variables. Staff names are removed before text is sent.
 """
 import json
 import os
@@ -34,7 +31,7 @@ def _secret(name, default=None):
 
 def ai_status():
     return {"Gemini": bool(_secret("GEMINI_API_KEY")), "Gemini model": _secret("GEMINI_MODEL", "gemini-3.5-flash"),
-            "Groq": bool(_secret("GROQ_API_KEY")), "Groq model": _secret("GROQ_MODEL", "llama-3.3-70b-versatile")}
+            "Groq": bool(_secret("GROQ_API_KEY")), "Groq model": _secret("GROQ_MODEL", "openai/gpt-oss-120b")}
 
 
 def scrub(text, names=()):
@@ -63,7 +60,7 @@ def _groq(prompt):
     key = _secret("GROQ_API_KEY")
     if not key:
         raise RuntimeError("no Groq key")
-    model = _secret("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = _secret("GROQ_MODEL", "openai/gpt-oss-120b")
     r = requests.post("https://api.groq.com/openai/v1/chat/completions", timeout=30,
                       headers={"Authorization": f"Bearer {key}"},
                       json={"model": model, "temperature": 0.2,

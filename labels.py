@@ -1,5 +1,5 @@
 """
-labels.py — congestion labels agreed with the Jungle Brew manager
+labels.py - congestion labels agreed with the Jungle Brew manager
 Okay       : average wait <= 7 minutes
 Congested  : more than 7 and up to 15 minutes
 Overloaded : more than 15 minutes

@@ -1,5 +1,5 @@
 """
-generate_dataset.py — creates the BrewStaffAI training data (Objective 1)
+generate_dataset.py - creates the BrewStaffAI training data (Objective 1)
 Runs the simulator under many random café conditions, averages 3 runs per
 condition, and labels each row Okay / Congested / Overloaded.
 
