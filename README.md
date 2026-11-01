@@ -1,9 +1,21 @@
-# BrewStaffAI — Version 4.2
+# BrewStaffAI — Version 4.2.1
 
 AI-Based Staffing Recommendation System for Jungle Brew Café, Parañaque City.
 Internal system: **Manager and Staff only.**
 
-## What's new in v4.2
+## What's new in v4.2.1
+
+| Area | What changed |
+|---|---|
+| Built-in User Guide (manager) | **How the AI Works** now has two tabs: **How the AI works** (the same accuracy and charts for the panel) and **User guide**. The guide is visual: pick a topic (Daily routine, Staffing Planner, Staff Reports, Pilot Results, Settings, Colors & AI, Troubleshooting, Glossary & help) and see numbered step cards, color legends, and tap-to-open FAQs. |
+| Built-in User Guide (staff) | **Settings** now has three tabs: **My account**, **User guide** (staff tasks only: get started, send a report, report an incident, My Reports, troubleshooting, glossary), and **How the AI works** (a simple 4-step explanation with the color legend, no charts). |
+| Help contact | The Glossary & help section shows: *Need help? Contact the BrewStaffAI team leader, Denmark Nercua Tagomata, at +639919160399 / denmarkntagomata.pup@gmail.com.* |
+| Full manual download | Both guides have a **Download the full User Manual (PDF)** button. The manual is updated for v4.2 (12-hour times, Archive button, plan edit/delete, Activity log tab, delete pop-up) and saved as `assets/BrewStaffAI_User_Manual.pdf`. |
+| No logic changes | The AI model, recommendations, database, and all v4.2 features are unchanged. The guide lives in its own file, `guide.py`. |
+
+**Upgrading from v4.2:** replace the files and push. No database or Secrets changes are needed.
+
+## What was new in v4.2
 
 | Area | What changed |
 |---|---|
@@ -26,8 +38,6 @@ Internal system: **Manager and Staff only.**
 | Accuracy per level | **How the AI Works** now shows precision, recall, and F1-score for Okay, Congested, and Overloaded, plus a short explanation of where the AI makes mistakes. |
 | Response time | **How the AI Works** shows how fast one AI prediction is, and the average time for planning a day, testing an hour, and AI tagging (measured automatically while the app is used). Included in the backup ZIP as `response_times.csv`. |
 | Small fixes | Chart labels no longer overlap; single-topic charts no longer show one very thick bar. |
-
-Edit `privacy.py` to change the contact person or how long data is kept. Change `NOTICE_VERSION` there if you edit the text, so everyone is asked to read it again.
 
 ## What was new in v4
 
@@ -69,14 +79,14 @@ python -m streamlit run app.py
   - *Test a specific hour:* try one hour (promo, someone absent)
 - **Staff Reports:** AI-tagged reports, charts, weekly summary (CSV), resolve, reply, archive (Archive button under Refresh)
 - **Pilot Results:** AI vs. staff agreement by day, and the tagging accuracy check
-- **How the AI Works:** visual explanation for the panel
+- **How the AI Works:** visual explanation for the panel, plus the **User guide** tab
 - **Settings:** account, team, café defaults, AI services, data & backup, activity log
 
 **Staff**
 - **My Shift Today:** the published crew plan and quick buttons
 - **End-of-Shift Report** and **Report an Incident**
 - **My Reports:** tags, manager replies, edit or delete within 24 hours
-- **Settings:** change password
+- **Settings:** change password, **User guide**, and a simple **How the AI works**
 
 ## Security
 
@@ -109,6 +119,8 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 | `session_cookie.py` | Stay logged in after a page refresh |
 | `privacy.py` | One-time privacy notice and consent |
 | `timefmt.py` | 12-hour (AM/PM) time labels |
+| `guide.py` | Built-in User Guide (manager and staff) and the simple "How the AI works" for staff |
+| `assets/BrewStaffAI_User_Manual.pdf` | Full user manual (downloadable from the guides) |
 | `auth.py` | Email, password, lockout, and timeout rules |
 | `db.py` | Database (Neon PostgreSQL online, SQLite locally) |
 | `pages_manager.py` / `pages_pilot.py` / `pages_staff.py` / `settings_page.py` | The pages |
@@ -124,4 +136,3 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 - The tagging check only uses reports that have text. Editing a report clears its check label, because the AI re-tags it.
 - Archived reports disappear from the staff member's **My Reports** too.
 - If a browser blocks cookies, the app still works; a refresh just asks for the password again.
-- Privacy notice: data is kept until the end of the study (December 2026) and the contact is "the research team leader through the café manager". Change both in `privacy.py` if your group decides differently.

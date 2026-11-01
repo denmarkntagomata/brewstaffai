@@ -8,6 +8,7 @@ import streamlit as st
 
 import auth
 import db
+import guide
 from timefmt import dt_label
 import privacy
 from ai_helper import ai_status, ask_llm
@@ -65,8 +66,14 @@ def force_password_change(user):
 # staff
 def staff_settings():
     user = st.session_state.user
-    page_header("Settings", "Your profile and password.")
-    _my_account(user)
+    page_header("Settings", "Your profile and password, a quick user guide, and how the AI works.")
+    t1, t2, t3 = st.tabs(["My account", "User guide", "How the AI works"])
+    with t1:
+        _my_account(user)
+    with t2:
+        guide.staff_guide()
+    with t3:
+        guide.staff_ai_simple()
 
 
 # manager

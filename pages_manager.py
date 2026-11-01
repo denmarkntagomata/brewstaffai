@@ -10,6 +10,7 @@ import streamlit as st
 
 import charts
 import db
+import guide
 import ui
 from ai_helper import CATEGORIES, explain_day, explain_hour, weekly_summary
 from recommender import load_model, plan_day, predict, recommend, sim_check
@@ -615,7 +616,15 @@ def _archived_card(r, names, me):
 # How the ai works
 def how_ai_works():
     ui.page_header("How the AI Works",
-                   "A simple, visual explanation of the two AI parts of BrewStaffAI and how accurate they are.")
+                   "How the two AI parts of BrewStaffAI work and how accurate they are, plus a visual guide to the system.")
+    ai_tab, guide_tab = st.tabs(["How the AI works", "User guide"])
+    with ai_tab:
+        _ai_evidence()
+    with guide_tab:
+        guide.manager_guide()
+
+
+def _ai_evidence():
     steps = [("1", "Simulator", "The COMP 014 queueing simulator plays 4,000 practice café hours."),
              ("2", "Labels", "Each hour is labeled Okay, Congested, or Overloaded by its average wait."),
              ("3", "Decision Tree", "The AI learns rules like “IF barista workload is high → Overloaded”."),
