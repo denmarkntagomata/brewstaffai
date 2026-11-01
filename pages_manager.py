@@ -13,6 +13,7 @@ import db
 import ui
 from ai_helper import CATEGORIES, explain_day, explain_hour, weekly_summary
 from recommender import load_model, plan_day, predict, recommend, sim_check
+from timefmt import dt_label, slot_label
 from ui import esc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +66,7 @@ def staff_lookup():
     return {u["email"]: u["full_name"] for u in db.list_users()}
 
 
-# ================================================================== DASHBOARD
+# Dashboard
 def dashboard():
     user = st.session_state.user
     hour = db.ph_now().hour
@@ -100,6 +101,14 @@ def dashboard():
             ui.plain_chart(charts.day_strip(rows))
             ui.legend()
             ui.plain_chart(charts.day_chart(rows))
+            c1, c2, _ = st.columns([1, 1, 2])
+            editing = st.session_state.get("edit_plan", False)
+            if c1.button("Close editor" if editing else "Edit plan", icon=":material/edit:", key="plan_edit",
+                         width="stretch"):
+                st.session_state.edit_plan = not editing
+                st.rerun()
+            if c2.button("Delete plan", icon=":material/delete:", key="plan_delete", width="stretch"):
+                _delete_plan_dialog(str(db.ph_today()))
         else:
             st.info("No plan for today yet. The AI can build one in a few seconds.")
             st.page_link(st.session_state.pages["planner"], label="Open the Staffing Planner",
@@ -112,11 +121,72 @@ def dashboard():
             st.markdown(f"<div class='bs-card' style='margin-bottom:8px;padding:12px 14px'>"
                         f"{ui.SENT_ICON.get(r['sentiment'], '')} <b>{esc(r['ai_summary'] or r['text'] or '')}</b><br>"
                         f"{ui.chip(ui.CAT_ICON.get(r['category'], '') + ' ' + (r['category'] or ''))}"
-                        f"{ui.chip(r['status'])}<span style='color:{ui.MUTED};font-size:.8rem'> {r['created_at'][:16]}"
+                        f"{ui.chip(r['status'])}<span style='color:{ui.MUTED};font-size:.8rem'> {dt_label(r['created_at'])}"
                         f"</span></div>", unsafe_allow_html=True)
+    if plans and st.session_state.get("edit_plan"):
+        _edit_published_plan(plans, str(db.ph_today()))
 
 
-# ================================================================== PLANNER
+def _edit_published_plan(plans, plan_date):
+    with st.container(border=True):
+        st.markdown("**Edit today's published plan**")
+        st.caption("Change the customers or crew for any hour, then press Save changes. Changed hours are re-checked "
+                   "by the AI, and staff see the update right away.")
+        t = pd.DataFrame({
+            "Hour": [slot_label(p["time_slot"]) for p in plans],
+            "Customers": [p["customers"] for p in plans],
+            "Cashiers": [p["cashiers"] for p in plans],
+            "Baristas": [p["baristas"] for p in plans],
+            "Level": [f"{ui.LEVEL_ICON.get(p['predicted_level'], '')} {p['predicted_level']}" for p in plans],
+            "Expected wait (min)": [p["expected_wait"] for p in plans],
+        })
+        edited = st.data_editor(
+            t, hide_index=True, width="stretch", key=f"pub_edit_{plan_date}",
+            disabled=["Hour", "Level", "Expected wait (min)"],
+            column_config={"Customers": st.column_config.NumberColumn(min_value=1, max_value=150, step=1),
+                           "Cashiers": st.column_config.NumberColumn(min_value=1, max_value=2, step=1),
+                           "Baristas": st.column_config.NumberColumn(min_value=1, max_value=4, step=1)})
+        if st.button("Save changes", type="primary", icon=":material/save:", key="pub_save"):
+            model, base = get_model(), base_condition()
+            rows, changed = [], 0
+            with st.spinner("Re-checking the hours you changed..."):
+                for p, cu, ca, ba in zip(plans, edited.Customers, edited.Cashiers, edited.Baristas):
+                    cu = int(cu) if pd.notna(cu) else p["customers"]
+                    ca = int(ca) if pd.notna(ca) else p["cashiers"]
+                    ba = int(ba) if pd.notna(ba) else p["baristas"]
+                    row = {"slot": p["time_slot"], "customers": cu, "cashiers": ca, "baristas": ba,
+                           "level": p["predicted_level"], "wait": p["expected_wait"] or 0,
+                           "insight": p["ai_insight"] or "", "ai_cashiers": p["ai_cashiers"] or p["cashiers"],
+                           "ai_baristas": p["ai_baristas"] or p["baristas"]}
+                    if (cu, ca, ba) != (p["customers"], p["cashiers"], p["baristas"]):
+                        cond = {**base, "arr_rate": max(cu, 1) / 60}
+                        row["level"], _ = predict(model, {**cond, "num_cashier": ca, "num_barista": ba})
+                        row["wait"] = round(sim_check(cond, ca, ba)["avg_wait"], 1)
+                        changed += 1
+                    rows.append(row)
+            if changed:
+                db.save_plans(rows, plan_date, st.session_state.user["email"], action="plan_edited")
+                st.session_state.edit_plan = False
+                st.toast(f"Plan updated ({changed} hour(s) changed).")
+                st.rerun()
+            st.info("No changes to save.")
+
+
+@st.dialog("Delete today's plan?")
+def _delete_plan_dialog(plan_date):
+    st.write("Staff will no longer see today's crew plan on **My Shift Today**. You can make and publish a new plan "
+             "anytime in the **Staffing Planner**.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Yes, delete plan", type="primary", icon=":material/delete:", width="stretch"):
+        db.delete_plans(plan_date, st.session_state.user["email"])
+        st.session_state.edit_plan = False
+        st.toast("Today's plan was deleted.")
+        st.rerun()
+
+
+# Planner
 def planner():
     ui.page_header("Staffing Planner",
                    "The AI predicts how busy each hour will be and recommends the smallest crew that keeps waits short.")
@@ -135,13 +205,16 @@ def _plan_day():
     if not slots:
         st.warning("Jungle Brew is closed on Sundays. Pick another day.")
         return
+    if db.get_plans(str(d)):
+        st.caption("A plan for this day is already published. Publishing again replaces it. "
+                   "To change it without re-planning, use Edit plan on the Dashboard.")
     cust, src = expected_customers(d, slots)
     with st.expander("Expected customers per hour (edit if you expect a promo or a slow day)"):
-        df = pd.DataFrame({"Hour": slots, "Customers": [cust[s] for s in slots], "Source": [src[s] for s in slots]})
+        df = pd.DataFrame({"Hour": [slot_label(s) for s in slots], "Customers": [cust[s] for s in slots], "Source": [src[s] for s in slots]})
         edited = st.data_editor(df, hide_index=True, disabled=["Hour", "Source"], width="stretch", key=f"edit_{d}",
                                 column_config={"Customers": st.column_config.NumberColumn(min_value=1, max_value=150,
                                                                                           step=1)})
-        cust = {h: int(c) if pd.notna(c) else cust[h] for h, c in zip(edited.Hour, edited.Customers)}
+        cust = {h: int(c) if pd.notna(c) else cust[h] for h, c in zip(slots, edited.Customers)}
     st.caption(f"Uses the café defaults in Settings (up to {max_staff()} counter staff per hour).")
 
     if st.button("Generate AI plan for the day", icon=":material/auto_awesome:", type="primary", key="day_go"):
@@ -176,7 +249,7 @@ def _plan_day():
     peak = max(rows, key=lambda r: r["customers"])
     a, b, c = st.columns(3)
     with a:
-        ui.kpi("Busiest hour", peak["slot"], f"about {peak['customers']} customers", color=ui.AMBER)
+        ui.kpi("Busiest hour", slot_label(peak["slot"]), f"about {peak['customers']} customers", color=ui.AMBER)
     with b:
         ui.kpi("Most staff needed", max(r["cashiers"] + r["baristas"] for r in rows), "counter staff at one time")
     with c:
@@ -202,7 +275,7 @@ def _adjust_crew(res):
         st.caption("Change the cashiers or baristas for any hour, then press **Check my changes**. "
                    "The AI re-checks those hours so you can see the expected wait before publishing.")
         t = pd.DataFrame({
-            "Hour": [r["slot"] for r in rows],
+            "Hour": [slot_label(r["slot"]) for r in rows],
             "Customers": [r["customers"] for r in rows],
             "AI crew": [f"{r['ai_cashiers']}C + {r['ai_baristas']}B" for r in rows],
             "Cashiers": [r["cashiers"] for r in rows],
@@ -258,7 +331,7 @@ def _plan_hour():
     if not slots:
         st.warning("Jungle Brew is closed on Sundays.")
         return
-    slot = c1.selectbox("Hour", slots, index=current_slot_index(slots), key=f"hr_slot_{d}")
+    slot = c1.selectbox("Hour", slots, index=current_slot_index(slots), key=f"hr_slot_{d}", format_func=slot_label)
     cust, src = expected_customers(d, [slot])
     customers = c2.number_input("Expected customers this hour", 1, 150, cust[slot], key=f"hr_cust_{d}_{slot}")
     c2.caption(f"Suggested from {src[slot]}")
@@ -339,7 +412,7 @@ def _plan_hour():
         st.success("Published to staff.")
 
 
-# ================================================================== REPORTS
+# Reports
 def _summary_csv(summary, provider, period):
     rows = [{"section": "Headline", "item": summary.get("headline", ""), "count": ""}]
     rows += [{"section": "Top issue", "item": i.get("issue", ""), "count": i.get("count", "")}
@@ -353,8 +426,22 @@ def _summary_csv(summary, provider, period):
 
 
 def reports():
-    ui.page_header("Staff Reports",
-                   "What your team reported about their shifts. The AI tags every report and can summarize the week.")
+    archived = st.session_state.get("show_archive", False)
+    archived_n = len(db.get_reports(archived=True))
+
+    def archive_button():
+        label = "Back to reports" if archived else f"Archive ({archived_n})"
+        icon = ":material/arrow_back:" if archived else ":material/archive:"
+        if st.button(label, icon=icon, key="archive_toggle", width="content",
+                     help="Reports you archived. They are deleted automatically after 30 days."):
+            st.session_state.show_archive = not archived
+            st.rerun()
+
+    ui.page_header("Archived Reports" if archived else "Staff Reports",
+                   f"Reports you archived. Restore them, or they are deleted automatically {db.ARCHIVE_DAYS} days "
+                   "after archiving." if archived else
+                   "What your team reported about their shifts. The AI tags every report and can summarize the week.",
+                   extra=archive_button)
     if db.count_new_reports():
         st.session_state.fresh_ids = {r["id"] for r in db.get_reports() if not r["seen_by_manager"]}
         db.mark_reports_seen()
@@ -362,26 +449,25 @@ def reports():
     fresh = st.session_state.get("fresh_ids", set())
     me = st.session_state.user["email"]
 
+    names = staff_lookup()
+    if archived:
+        reps = db.get_reports(archived=True)
+        if not reps:
+            st.info("The archive is empty. To archive a report, press Archive on the report card.")
+        for r in reps:
+            _archived_card(r, names, me)
+        return
+
     f1, f2, f3, f4 = st.columns(4)
-    status = f1.selectbox("Status", ["All", "Open", "Resolved", "Archived"])
+    status = f1.selectbox("Status", ["All", "Open", "Resolved"])
     days = f2.selectbox("Period", [7, 14, 30, 365], format_func=lambda x: f"Last {x} days" if x < 365 else "All time")
     sent = f3.multiselect("Feeling", ["Positive", "Neutral", "Negative"], placeholder="All")
     cats = f4.multiselect("Topic", CATEGORIES, placeholder="All")
-    archived = status == "Archived"
-    reps = [r for r in db.get_reports(days=None if archived else days, archived=archived)
+    reps = [r for r in db.get_reports(days=days)
             if (not sent or r["sentiment"] in sent) and (not cats or r["category"] in cats)
-            and (status in ("All", "Archived") or r["status"] == status)]
+            and (status == "All" or r["status"] == status)]
     if not reps:
-        st.info("No archived reports." if archived else
-                "No reports match these filters. Staff send them from 'End-of-Shift Report' and 'Report an Incident'.")
-        return
-    names = staff_lookup()
-
-    if archived:
-        st.caption(f"Archived reports are hidden from charts and are deleted for good {db.ARCHIVE_DAYS} days "
-                   "after archiving.")
-        for r in reps:
-            _archived_card(r, names, me)
+        st.info("No reports match these filters. Staff send them from 'End-of-Shift Report' and 'Report an Incident'.")
         return
 
     df = pd.DataFrame(reps)
@@ -437,7 +523,7 @@ def _chips(r, names, is_new=False):
             ui.chip(f"{ui.CAT_ICON.get(r['category'], '')} {r['category']}") +
             ui.chip("End of shift" if r["report_type"] == "end_of_shift" else "Incident") +
             ui.chip(names.get(r["user_email"], r["user_email"])) +
-            ui.chip(r["created_at"][:16]) +
+            ui.chip(dt_label(r["created_at"])) +
             (ui.chip("Edited") if r["edited_at"] else "") +
             ui.chip("Resolved" if r["status"] == "Resolved" else "Open"))
 
@@ -450,11 +536,11 @@ def _report_card(r, names, me, is_new):
                         unsafe_allow_html=True)
             st.markdown(_chips(r, names, is_new), unsafe_allow_html=True)
             if r["report_type"] == "end_of_shift" and r["predicted_level"]:
-                st.markdown(f"{r['time_slot']} · {r['customers']} customers · staff felt "
+                st.markdown(f"{slot_label(r['time_slot'])} · {r['customers']} customers · staff felt "
                             f"{ui.badge(r['reported_level'])} · AI predicted {ui.badge(r['predicted_level'])}",
                             unsafe_allow_html=True)
             if r["reply"]:
-                st.markdown(f"<div class='bs-reply'><b>Your reply</b> · {r['replied_at'][:16]}<br>"
+                st.markdown(f"<div class='bs-reply'><b>Your reply</b> · {dt_label(r['replied_at'])}<br>"
                             f"{esc(r['reply'])}</div>", unsafe_allow_html=True)
         with act:
             if r["status"] == "Open":
@@ -464,27 +550,50 @@ def _report_card(r, names, me, is_new):
             elif st.button("Reopen", key=f"reo{r['id']}", icon=":material/undo:", width="stretch"):
                 db.set_status(r["id"], "Open", by=me)
                 st.rerun()
-        with st.expander("Original text, reply, archive"):
+            if st.button("Archive", key=f"arc{r['id']}", icon=":material/archive:", width="stretch"):
+                _archive_dialog(r, me)
+        with st.expander("Original text and reply"):
             st.write(r["text"] or "—")
             st.caption(f"Tagged by {r['ai_provider'] or 'basic keyword tagging (AI unavailable)'}")
             reply = st.text_area("Reply to the staff member", value=r["reply"] or "", max_chars=500,
                                  key=f"rep{r['id']}", placeholder="Example: Thanks! We'll add a second barista at noon.")
-            c1, c2 = st.columns(2)
-            if c1.button("Send reply", key=f"rep_btn{r['id']}", icon=":material/send:", width="stretch"):
+            if st.button("Send reply", key=f"rep_btn{r['id']}", icon=":material/send:"):
                 if reply.strip():
                     db.reply_to_report(r["id"], reply, me)
                     st.toast("Reply sent. The staff member will see it in My Reports.")
                     st.rerun()
                 else:
                     st.error("Please write a reply first.")
-            reason = c2.text_input("Reason for archiving", key=f"arc_r{r['id']}", max_chars=200,
-                                   placeholder="Example: duplicate, test report")
-            if c2.button("Archive", key=f"arc{r['id']}", icon=":material/archive:", width="stretch"):
-                if reason.strip():
-                    db.archive_report(r["id"], reason, me)
-                    st.rerun()
-                else:
-                    st.error("Please give a reason for archiving.")
+
+
+@st.dialog("Archive this report?")
+def _archive_dialog(r, me):
+    st.markdown(f"**{esc(r['ai_summary'] or r['text'] or '')}**", unsafe_allow_html=True)
+    reason = st.text_input("Reason for archiving", max_chars=200, placeholder="Example: duplicate, test report")
+    st.caption(f"The report is hidden from the list and charts. You can restore it from **Archive** (top right). "
+               f"It is deleted automatically {db.ARCHIVE_DAYS} days after archiving.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Archive", type="primary", icon=":material/archive:", width="stretch"):
+        if not reason.strip():
+            st.error("Please give a reason for archiving.")
+            return
+        db.archive_report(r["id"], reason, me)
+        st.toast("Report archived. Find it under Archive at the top right.")
+        st.rerun()
+
+
+@st.dialog("Delete this report permanently?")
+def _delete_archived_dialog(r, me):
+    st.markdown(f"**{esc(r['ai_summary'] or r['text'] or '')}**", unsafe_allow_html=True)
+    st.warning("This cannot be undone. The report will be removed from BrewStaffAI for good.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Yes, delete", type="primary", icon=":material/delete:", width="stretch"):
+        db.delete_report(r["id"], me)
+        st.rerun()
 
 
 def _archived_card(r, names, me):
@@ -492,20 +601,18 @@ def _archived_card(r, names, me):
         st.markdown(f"{ui.SENT_ICON.get(r['sentiment'], '')} **{esc(r['ai_summary'] or r['text'] or '')}**",
                     unsafe_allow_html=True)
         st.markdown(_chips(r, names), unsafe_allow_html=True)
-        st.caption(f"Archived {r['archived_at'][:16]} by {names.get(r['archived_by'], r['archived_by'])} · "
-                   f"Reason: {r['archive_reason']} · Deletes automatically on {db.purge_date(r):%B %d, %Y}")
+        purge = db.purge_date(r)
+        st.caption(f"Archived {dt_label(r['archived_at'])} by {names.get(r['archived_by'], r['archived_by'])} · "
+                   f"Reason: {r['archive_reason']} · Deletes automatically on {purge:%B} {purge.day}, {purge.year}")
         c1, c2, _ = st.columns([1, 1, 3])
         if c1.button("Restore", key=f"rst{r['id']}", icon=":material/unarchive:", width="stretch"):
             db.restore_report(r["id"], me)
             st.rerun()
-        confirm = c2.checkbox("Confirm delete", key=f"delok{r['id']}")
-        if c2.button("Delete now", key=f"del{r['id']}", icon=":material/delete:", width="stretch",
-                     disabled=not confirm):
-            db.delete_report(r["id"], me)
-            st.rerun()
+        if c2.button("Delete now", key=f"del{r['id']}", icon=":material/delete:", width="stretch"):
+            _delete_archived_dialog(r, me)
 
 
-# ================================================================== HOW THE AI WORKS
+# How the ai works
 def how_ai_works():
     ui.page_header("How the AI Works",
                    "A simple, visual explanation of the two AI parts of BrewStaffAI and how accurate they are.")

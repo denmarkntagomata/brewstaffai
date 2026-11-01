@@ -21,8 +21,20 @@ TARGET = 0.80
 
 def pilot_results():
     ui.page_header("Pilot Results",
-                   "How well the AI matched real shifts during the pilot week, and how accurate its report tags are.")
-    t1, t2 = st.tabs(["AI vs. staff", "Check AI tags"])
+                   "Our evidence for the paper: did the AI match what really happened during the pilot week?")
+    with st.expander("How to use this page", icon=":material/help:", expanded=not any(r["report_type"] == "end_of_shift" for r in db.get_reports())):
+        a, b = st.columns(2, gap="large")
+        a.markdown("""**Tab 1 · AI vs. staff**
+1. Staff send end-of-shift reports and choose how busy the hour *felt*.
+2. BrewStaffAI saves what the AI *predicted* for the same hour.
+3. This tab compares the two, day by day. A high **agreement %** means the AI matches real shifts.
+4. Download the CSV files for Chapter 4 of the paper.""")
+        b.markdown(f"""**Tab 2 · Check AI tags** (team members only)
+1. Read one staff report at a time. The AI's answer is hidden on purpose.
+2. Choose the feeling and topic **you** think is right, then save.
+3. After {CHECK_GOAL} reports, the gauges show how often the AI agreed with you (target {TARGET:.0%}).
+4. Download the results for the paper.""")
+    t1, t2 = st.tabs(["1 · AI vs. staff", "2 · Check AI tags"])
     with t1:
         _agreement()
     with t2:
@@ -47,7 +59,8 @@ def _agreement():
            if r["report_type"] == "end_of_shift" and r["predicted_level"] and r["reported_level"]
            and r["report_date"] and str(start) <= r["report_date"] <= str(end)]
     if not eos:
-        st.info("No end-of-shift reports for these dates yet. This page fills in as staff send reports.")
+        st.info("No end-of-shift reports for these dates yet. Results appear here automatically as staff send "
+                "end-of-shift reports. Try a wider date range, or wait for the pilot week to start.")
         return
     df = pd.DataFrame(eos)
     df["agree"] = df.predicted_level == df.reported_level
@@ -64,7 +77,8 @@ def _agreement():
         ui.kpi("AI expected busier", busier, "than staff felt", color=ui.AMBER)
     with d:
         ui.kpi("AI expected calmer", calmer, "than staff felt", color=ui.RED if calmer else ui.TEXT)
-    st.write("")
+    st.caption("**Agreement** = the AI predicted the same level the staff felt. **Busier / calmer** shows which way "
+               "the AI was off when they disagreed.")
 
     by_day = (df.groupby("report_date").agg(reports=("agree", "size"), agreed=("agree", "sum"))
               .reset_index().sort_values("report_date"))
@@ -81,6 +95,8 @@ def _agreement():
         ui.plain_chart(charts.confusion({"labels": CLASSES, "matrix": matrix}, "Staff felt vs. AI predicted",
                                         "AI:", "Staff:"))
 
+    st.caption("Left: green bars = AI and staff agreed, amber = they differed; the line is the agreement % per day. "
+               "Right: each box counts reports; the diagonal (top-left to bottom-right) means agreement.")
     table = by_day.rename(columns={"day": "Day", "reports": "Reports", "agreed": "Agreed",
                                    "different": "Different", "agreement": "Agreement %"})
     table = table[["Day", "Reports", "Agreed", "Different", "Agreement %"]]
@@ -100,8 +116,8 @@ def _tag_check():
     me = st.session_state.user["email"]
     done = db.checked_reports()
     n = len(done)
-    st.caption(f"A teammate reads each report **without seeing the AI's tags** and picks the right feeling and "
-               f"topic. The app then compares the two. Goal: {CHECK_GOAL} reports, target {TARGET:.0%} match.")
+    st.caption(f"Read the report below and choose the feeling and topic you think is right. The AI's answer stays "
+               f"hidden so your choice is fair. Goal: {CHECK_GOAL} reports, target {TARGET:.0%} match.")
     st.progress(min(n / CHECK_GOAL, 1.0), text=f"{n} of {CHECK_GOAL} reports checked")
 
     nxt = db.next_report_to_check()

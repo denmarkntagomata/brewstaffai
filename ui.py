@@ -69,21 +69,25 @@ h1, h2, h3 {{ letter-spacing: -0.01em; }}
   margin-top:8px; }}
 section[data-testid="stSidebar"] {{ border-right:1px solid var(--border); }}
 div[data-testid="stForm"] {{ border-radius:16px; }}
-.st-key-refresh_btn {{ display:flex; justify-content:flex-end; }}
+.st-key-refresh_btn, .st-key-archive_toggle {{ display:flex; justify-content:flex-end; }}
+.st-key-archive_toggle {{ margin-top:-6px; }}
 @media (max-width: 640px) {{
   .bs-title {{ font-size:1.6rem; }}
   .block-container {{ padding:3.6rem 1rem 2rem 1rem; }}
-  .st-key-refresh_btn {{ justify-content:flex-start; }}
+  .st-key-refresh_btn, .st-key-archive_toggle {{ justify-content:flex-start; }}
 }}
 </style>""", unsafe_allow_html=True)
 
 
-def page_header(title, purpose):
-    left, right = st.columns([5, 1], vertical_alignment="center", gap="small")
+def page_header(title, purpose, extra=None):
+    left, right = st.columns([5, 1], vertical_alignment="top", gap="small")
     left.markdown(f"<div class='bs-title'>{esc(title)}</div>", unsafe_allow_html=True)
-    if right.button("Refresh", icon=":material/refresh:", key="refresh_btn", width="content",
-                    help="Load the latest data"):
-        st.rerun()
+    with right:
+        if st.button("Refresh", icon=":material/refresh:", key="refresh_btn", width="content",
+                     help="Load the latest data"):
+            st.rerun()
+        if extra:
+            extra()
     st.markdown(f"<div class='bs-sub'>{purpose}</div>", unsafe_allow_html=True)
 
 

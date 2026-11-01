@@ -13,6 +13,7 @@ from ai_helper import tag_feedback
 from labels import CLASSES
 from pages_manager import base_condition, current_slot_index, get_model, slots_for
 from recommender import predict
+from timefmt import dt_label, slot_label
 from ui import esc
 
 
@@ -64,7 +65,7 @@ def _level_label(level):
     return f"{ui.LEVEL_ICON[level]} {level} – {ui.LEVEL_TEXT[level]}"
 
 
-# ================================================================== HOME
+# Home
 def home():
     user = st.session_state.user
     ui.page_header(f"Hi, {user['full_name'].split()[0]}!", "Your crew plan for today and quick buttons for your reports.")
@@ -95,14 +96,14 @@ def home():
     for p in plans:
         color = ui.LEVEL_COLOR.get(p["predicted_level"], ui.MUTED)
         now = f" · <b style='color:{ui.LIME}'>NOW</b>" if p["time_slot"] == now_slot else ""
-        st.markdown(f"<div class='bs-slot' style='border-left-color:{color}'><b>{p['time_slot']}</b>{now}"
+        st.markdown(f"<div class='bs-slot' style='border-left-color:{color}'><b>{slot_label(p['time_slot'])}</b>{now}"
                     f"<span style='float:right'>{ui.badge(p['predicted_level'])}</span>"
                     f"{ui.people(p['cashiers'], p['baristas'])}"
                     f"<span class='bs-kpi-sub'>about {p['customers']} customers</span></div>",
                     unsafe_allow_html=True)
 
 
-# ================================================================== END OF SHIFT
+# End of shift
 def end_of_shift():
     user = st.session_state.user
     ui.page_header("End-of-Shift Report",
@@ -115,7 +116,7 @@ def end_of_shift():
         st.warning("Jungle Brew is closed on Sundays. Pick the date of your shift.")
         return
     with st.form("eos", clear_on_submit=True):
-        slot = st.selectbox("Busiest hour of your shift", slots, index=current_slot_index(slots))
+        slot = st.selectbox("Busiest hour of your shift", slots, index=current_slot_index(slots), format_func=slot_label)
         c3, c4, c5 = st.columns(3)
         customers = c3.number_input("About how many customers in that hour?", 0, 150, 20)
         cashiers = c4.number_input("Cashiers on duty", 1, 2, 1)
@@ -135,7 +136,7 @@ def end_of_shift():
         _ai_result(tags, felt=level, predicted=pred)
 
 
-# ================================================================== INCIDENT
+# Incident
 def incident():
     user = st.session_state.user
     ui.page_header("Report an Incident", "Something broke, ran out, or went really well? Tell the manager right away.")
@@ -156,7 +157,7 @@ def incident():
             _ai_result(tags)
 
 
-# ================================================================== MY REPORTS
+# My reports
 def my_reports():
     user = st.session_state.user
     ui.page_header("My Reports", "Everything you have sent, the AI's tags, and replies from the manager.")
@@ -187,12 +188,12 @@ def _my_card(r, user, new_reply):
         chips = (ui.chip(f"{ui.CAT_ICON.get(r['category'], '')} {r['category']}") +
                  ui.chip("End of shift" if r["report_type"] == "end_of_shift" else "Incident") +
                  ui.chip("Resolved" if r["status"] == "Resolved" else "Open") +
-                 ui.chip(r["created_at"][:16]) + (ui.chip("Edited") if r["edited_at"] else ""))
+                 ui.chip(dt_label(r["created_at"])) + (ui.chip("Edited") if r["edited_at"] else ""))
         st.markdown(f"{ui.SENT_ICON.get(r['sentiment'], '')} <b>{esc(r['ai_summary'] or r['text'] or '')}</b><br>"
                     f"{chips}", unsafe_allow_html=True)
         if r["reply"]:
             st.markdown(f"<div class='bs-reply'>{ui.chip('New', 'bs-new') if new_reply else ''}"
-                        f"<b>Manager's reply</b> · {r['replied_at'][:16]}<br>{esc(r['reply'])}</div>",
+                        f"<b>Manager's reply</b> · {dt_label(r['replied_at'])}<br>{esc(r['reply'])}</div>",
                         unsafe_allow_html=True)
         if not db.can_staff_change(r):
             return
@@ -227,9 +228,20 @@ def _edit_form(r, user):
             st.toast("Report updated.")
             st.rerun()
         st.error("This report can no longer be changed (it was replied to, resolved, or is older than 24 hours).")
-    confirm = st.checkbox("I want to delete this report", key=f"delc{r['id']}")
-    if st.button("Delete report", key=f"del{r['id']}", icon=":material/delete:", disabled=not confirm):
+    if st.button("Delete report", key=f"del{r['id']}", icon=":material/delete:"):
+        _delete_dialog(r, user)
+
+
+@st.dialog("Delete this report?")
+def _delete_dialog(r, user):
+    st.markdown(f"**{esc(r['ai_summary'] or r['text'] or '')}**", unsafe_allow_html=True)
+    st.warning("Are you sure you want to delete this report? Once deleted, it **cannot be recovered**. "
+               "If you change your mind, you will need to send a new report.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Yes, delete", type="primary", icon=":material/delete:", width="stretch"):
         if db.delete_own_report(r["id"], user["email"]):
             st.toast("Report deleted.")
             st.rerun()
-        st.error("This report can no longer be deleted.")
+        st.error("This report can no longer be deleted (it was replied to, resolved, or is older than 24 hours).")

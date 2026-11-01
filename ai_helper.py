@@ -14,6 +14,8 @@ from collections import Counter
 
 import requests
 
+from timefmt import slot_label
+
 CATEGORIES = ["Staffing/Workload", "Equipment", "Customer Concern", "Inventory/Supplies", "Process", "Other"]
 SENTIMENTS = ["Positive", "Neutral", "Negative"]
 _COMMON = {"staff", "manager", "jungle", "brew", "demo", "one", "two", "three", "cafe", "café"}
@@ -93,10 +95,10 @@ def ask_json(prompt, required):
 
 
 RULES = """Rules: use ONLY the numbers given, never invent numbers, plain simple English for café staff,
-each bullet max 18 words, no names. Thresholds: Okay <= 7 min wait, Congested 7-15 min, Overloaded > 15 min."""
+each bullet max 18 words, no names, write times in 12-hour format with AM/PM (e.g., 1:00 PM). Thresholds: Okay <= 7 min wait, Congested 7-15 min, Overloaded > 15 min."""
 
 
-# ---------------------------------------------------------------- one hour
+# one hour
 def explain_hour(ctx):
     prompt = f"""You are BrewStaffAI, the staffing assistant of Jungle Brew Café, Parañaque City.
 Explain this staffing recommendation to the store manager.
@@ -104,7 +106,7 @@ Explain this staffing recommendation to the store manager.
 JSON keys: "headline" (one sentence, max 14 words), "why" (list of 3 short reasons),
 "risk" (one sentence: what happens if the current plan is kept), "tip" (one practical tip).
 
-Time slot: {ctx['slot']} ({ctx['day']}) · expected customers: {ctx['customers']} · simple drinks: {ctx['p_simple']:.0%}
+Time slot: {slot_label(ctx['slot'])} ({ctx['day']}) · expected customers: {ctx['customers']} · simple drinks: {ctx['p_simple']:.0%}
 Current plan: {ctx['cur_c']} cashier(s) + {ctx['cur_b']} barista(s) -> AI predicts {ctx['cur_level']}, \
 simulated wait {ctx['cur_wait']:.1f} min, {ctx['cur_walkout']:.0%} walk out
 Recommended: {ctx['rec_c']} cashier(s) + {ctx['rec_b']} barista(s) -> AI predicts {ctx['rec_level']} \
@@ -128,9 +130,9 @@ Target reached: {ctx['reached']}"""
     }, None
 
 
-# ---------------------------------------------------------------- whole day
+# whole day
 def explain_day(day, rows):
-    lines = "\n".join(f"{r['slot']}: {r['customers']} customers -> {r['cashiers']}C+{r['baristas']}B, "
+    lines = "\n".join(f"{slot_label(r['slot'])}: {r['customers']} customers -> {r['cashiers']}C+{r['baristas']}B, "
                       f"{r['level']}, wait {r['wait']} min" for r in rows)
     prompt = f"""You are BrewStaffAI for Jungle Brew Café. Summarize this AI staffing plan for {day} for the manager.
 {RULES}
@@ -145,13 +147,13 @@ Plan per hour (C = cashier, B = barista):
     peak = max(rows, key=lambda r: r["customers"])
     most = max(r["cashiers"] + r["baristas"] for r in rows)
     return {"headline": f"Plan for {day}: up to {most} counter staff at the busiest hour.",
-            "peak": f"Busiest hour: {peak['slot']} with about {peak['customers']} customers.",
+            "peak": f"Busiest hour: {slot_label(peak['slot'])} with about {peak['customers']} customers.",
             "actions": ["Schedule your strongest barista during the peak hours.",
                         "Use slow hours for cleaning and restocking.",
                         "Check staff reports tonight to improve tomorrow's plan."]}, None
 
 
-# ---------------------------------------------------------------- feedback tagging
+# feedback tagging
 _KEYWORDS = {
     "Staffing/Workload": ["staff", "short", "alone", "rush", "busy", "tired", "overtime", "kulang", "pagod", "barista"],
     "Equipment": ["machine", "grinder", "espresso", "broken", "sira", "pos", "printer", "blender", "aircon"],
@@ -186,7 +188,7 @@ Report: \"\"\"{clean}\"\"\""""
     return {**_fallback_tag(clean), "provider": None}
 
 
-# ---------------------------------------------------------------- weekly summary
+# weekly summary
 def weekly_summary(reports, names=()):
     if not reports:
         return None, None

@@ -25,8 +25,8 @@ SQLITE_PATH = os.path.join(BASE, "data", "brewstaff.db")
 PH_TZ = timezone(timedelta(hours=8))
 FMT = "%Y-%m-%d %H:%M:%S"
 
-ARCHIVE_DAYS = 30        # archived reports are deleted for good after this many days
-EDIT_HOURS = 24          # staff can edit or delete their own report within this window
+ARCHIVE_DAYS = 30
+EDIT_HOURS = 24
 
 DEFAULT_SETTINGS = {
     # Placeholder until the re-observation (about 24 customers/hour at the observed noon peak)
@@ -37,7 +37,7 @@ DEFAULT_SETTINGS = {
 }
 
 
-# ------------------------------------------------------------------ time
+# time
 def ph_now():
     return datetime.now(PH_TZ).replace(tzinfo=None)
 
@@ -54,7 +54,7 @@ def _ago(**kw):
     return (ph_now() - timedelta(**kw)).strftime(FMT)
 
 
-# ------------------------------------------------------------------ connection
+# connection
 def secret(name):
     try:
         import streamlit as st
@@ -154,7 +154,7 @@ def ping():
         return False, None
 
 
-# ------------------------------------------------------------------ passwords
+# passwords
 def hash_pw(password, salt=None):
     salt = salt or secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
@@ -166,7 +166,7 @@ def check_pw(password, stored):
     return secrets.compare_digest(hash_pw(password, salt), stored)
 
 
-# ------------------------------------------------------------------ setup
+# setup
 # Columns added after v3. Existing databases get them through ALTER TABLE.
 NEW_COLS = {
     "reports": {
@@ -189,7 +189,7 @@ def init_db():
     e = engine()
     if e.dialect.name == "sqlite" and os.path.exists(SQLITE_PATH):
         cols = [r["name"] for r in _rows("PRAGMA table_info(users)")]
-        if cols and "email" not in cols:       # v1 database with usernames: keep a copy, start fresh
+        if cols and "email" not in cols:
             e.dispose()
             shutil.move(SQLITE_PATH, SQLITE_PATH.replace(".db", "_v1_backup.db"))
     serial = "SERIAL PRIMARY KEY" if e.dialect.name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -230,7 +230,7 @@ def init_db():
             for name, kind in cols.items():
                 if name not in existing:
                     c.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {name} {kind}"))
-                    if name == "seen_by_manager":    # reports from before v4 are not "new"
+                    if name == "seen_by_manager":
                         c.execute(sa.text("UPDATE reports SET seen_by_manager=1"))
     _READY = True
     cleanup()
@@ -249,20 +249,20 @@ def cleanup(force=False):
     return n
 
 
-# ------------------------------------------------------------------ activity log
+# activity log
 def log(actor, action, detail=""):
     try:
         _exec("INSERT INTO audit(at, actor, action, detail) VALUES(:at, :actor, :action, :detail)",
               at=now(), actor=actor or "-", action=action, detail=detail)
     except Exception:
-        pass   # logging must never break the app
+        pass
 
 
 def get_audit(limit=300):
     return _rows("SELECT at, actor, action, detail FROM audit ORDER BY id DESC LIMIT :n", n=int(limit))
 
 
-# ------------------------------------------------------------------ accounts
+# accounts
 def has_manager():
     r = _one("SELECT COUNT(*) AS n FROM users WHERE role='manager' AND active=1")
     return bool(r and r["n"] > 0)
@@ -318,7 +318,7 @@ def check_password(email, password):
 def change_password(email, new_password, must_change=False, by=None):
     _exec("UPDATE users SET pw_hash=:h, must_change=:m, failed=0, locked_until=NULL WHERE email=:e",
           h=hash_pw(new_password), m=int(must_change), e=email)
-    if must_change:                       # reset by the manager: sign the person out everywhere
+    if must_change:
         end_all_sessions(email)
     log(by or email, "password_reset" if must_change else "password_changed", email)
 
@@ -349,7 +349,7 @@ def accept_privacy(email, version):
     log(email, "privacy_accepted", f"notice v{version}")
 
 
-# ------------------------------------------------------------------ login sessions (cookie)
+# login sessions (cookie)
 def _token_hash(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -385,7 +385,7 @@ def end_all_sessions(email):
     _exec("DELETE FROM sessions WHERE email=:e", e=email)
 
 
-# ------------------------------------------------------------------ settings
+# settings
 def get_setting(key):
     r = _one("SELECT value FROM settings WHERE key=:k", k=key)
     return json.loads(r["value"]) if r else DEFAULT_SETTINGS[key]
@@ -397,7 +397,7 @@ def set_setting(key, value, by=None):
     log(by, "settings_changed", key)
 
 
-# ------------------------------------------------------------------ reports
+# reports
 REPORT_COLS = {"user_email", "created_at", "report_type", "report_date", "time_slot", "customers", "cashiers",
                "baristas", "reported_level", "predicted_level", "text", "sentiment", "category", "ai_summary",
                "ai_provider", "status"}
@@ -493,7 +493,7 @@ def purge_date(r):
     return (datetime.strptime(r["archived_at"], FMT) + timedelta(days=ARCHIVE_DAYS)).date()
 
 
-# ------------------------------------------------------------------ notification counts
+# notification counts
 def count_new_reports():
     r = _one("SELECT COUNT(*) AS n FROM reports WHERE seen_by_manager=0 AND archived_at IS NULL")
     return r["n"] if r else 0
@@ -512,7 +512,7 @@ def mark_replies_seen(email):
     _exec("UPDATE reports SET reply_seen=1 WHERE user_email=:e AND reply_seen=0", e=email)
 
 
-# ------------------------------------------------------------------ tagging accuracy check
+# tagging accuracy check
 def next_report_to_check():
     """Oldest report with text that nobody has hand-labeled yet."""
     return _one("""SELECT id, report_type, text FROM reports
@@ -545,8 +545,8 @@ def avg_reported_customers(weekday, time_slot):
     return (sum(vals) / len(vals), len(vals)) if vals else (None, 0)
 
 
-# ------------------------------------------------------------------ plans
-def save_plans(rows, plan_date, created_by):
+# plans
+def save_plans(rows, plan_date, created_by, action="plan_published"):
     with engine().begin() as c:
         c.execute(sa.text("DELETE FROM plans WHERE plan_date=:d"), {"d": plan_date})
         for r in rows:
@@ -559,15 +559,21 @@ def save_plans(rows, plan_date, created_by):
                        "aic": int(r.get("ai_cashiers", r["cashiers"])), "aib": int(r.get("ai_baristas", r["baristas"]))})
     changed = sum(1 for r in rows if (r.get("ai_cashiers", r["cashiers"]), r.get("ai_baristas", r["baristas"]))
                   != (r["cashiers"], r["baristas"]))
-    log(created_by, "plan_published",
+    log(created_by, action,
         f"{plan_date} ({len(rows)} hour(s)" + (f", {changed} changed by the manager)" if changed else ")"))
+
+
+def delete_plans(plan_date, by):
+    n = _exec("DELETE FROM plans WHERE plan_date=:d", d=str(plan_date))
+    log(by, "plan_deleted", f"{plan_date} ({n} hour(s))")
+    return n
 
 
 def get_plans(plan_date):
     return _rows("SELECT * FROM plans WHERE plan_date=:d ORDER BY time_slot", d=str(plan_date))
 
 
-# ------------------------------------------------------------------ response times
+# response times
 def record_timing(kind, seconds):
     try:
         _exec("INSERT INTO timings(at, kind, seconds) VALUES(:a, :k, :s)", a=now(), k=kind, s=float(seconds))
@@ -580,7 +586,7 @@ def timing_stats():
                     FROM timings GROUP BY kind""")
 
 
-# ------------------------------------------------------------------ backup
+# backup
 def export_zip(by=None):
     """All data as CSV files in one ZIP. Password hashes and session tokens are never exported."""
     buf = io.BytesIO()

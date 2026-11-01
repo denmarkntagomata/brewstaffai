@@ -8,12 +8,13 @@ import streamlit as st
 
 import auth
 import db
+from timefmt import dt_label
 import privacy
 from ai_helper import ai_status, ask_llm
 from ui import AMBER, LEVEL_COLOR, MUTED, RED, badge, esc, kpi, page_header, password_feedback
 
 
-# ------------------------------------------------------------------ shared
+# shared
 def _change_password_box(user, require_current=True, key="cp"):
     if require_current:
         cur = st.text_input("Current password", type="password", key=f"{key}_cur")
@@ -45,7 +46,7 @@ def _my_account(user):
             privacy.show_notice_text()
             accepted = (db.get_user(user["email"]) or {}).get("privacy_at")
             if accepted:
-                st.caption(f"You accepted this notice on {accepted[:16]}.")
+                st.caption(f"You accepted this notice on {dt_label(accepted)}.")
     with c2:
         st.markdown("##### Change password")
         _change_password_box(user)
@@ -61,18 +62,19 @@ def force_password_change(user):
             st.rerun()
 
 
-# ------------------------------------------------------------------ staff
+# staff
 def staff_settings():
     user = st.session_state.user
     page_header("Settings", "Your profile and password.")
     _my_account(user)
 
 
-# ------------------------------------------------------------------ manager
+# manager
 def manager_settings():
     user = st.session_state.user
     page_header("Settings", "Everything you can change in BrewStaffAI, grouped in one place.")
-    t1, t2, t3, t4, t5 = st.tabs(["My account", "Team accounts", "Café defaults", "AI services", "Data & backup"])
+    t1, t2, t3, t4, t5, t6 = st.tabs(["My account", "Team accounts", "Café defaults", "AI services", "Data & backup",
+                                      "Activity log"])
     with t1:
         _my_account(user)
     with t2:
@@ -83,6 +85,8 @@ def manager_settings():
         _ai_services()
     with t5:
         _data_backup(user)
+    with t6:
+        _activity_log()
 
 
 def _team(user):
@@ -98,6 +102,7 @@ def _team(user):
     df = pd.DataFrame(users)
     df["Status"] = df.active.map(lambda a: "Active" if a else "Deactivated")
     df["Password"] = df.must_change.map(lambda m: "Temporary" if m else "Set by user")
+    df["last_login"] = df.last_login.map(lambda v: dt_label(v) if v else "Never")
     st.dataframe(df.rename(columns={"full_name": "Name", "email": "Email", "role": "Role", "last_login": "Last login"})
                  [["Name", "Email", "Role", "Status", "Password", "Last login"]], hide_index=True, width="stretch")
 
@@ -196,12 +201,13 @@ def _ai_services():
                "Staff names are removed before any text is sent to an AI service.")
 
 
-# ------------------------------------------------------------------ data & backup
+# data & backup
 ACTION_LABELS = {
     "login": "Logged in", "logout": "Logged out", "login_failed": "Failed login", "account_locked": "Account locked",
     "account_created": "Account created", "password_changed": "Password changed", "password_reset": "Password reset",
     "account_activated": "Account activated", "account_deactivated": "Account deactivated",
-    "setup_code_wrong": "Wrong setup code", "plan_published": "Plan published", "settings_changed": "Settings changed",
+    "setup_code_wrong": "Wrong setup code", "plan_published": "Plan published", "plan_edited": "Plan edited",
+    "plan_deleted": "Plan deleted", "settings_changed": "Settings changed",
     "report_status": "Report status changed", "report_edited": "Report edited by sender",
     "report_deleted": "Report deleted", "report_reply": "Manager replied", "report_archived": "Report archived",
     "report_restored": "Report restored", "archive_auto_deleted": "Old archived reports deleted",
@@ -244,12 +250,14 @@ def _data_backup(user):
                                file_name=f"brewstaffai_backup_{db.ph_today()}.zip", mime="application/zip",
                                type="primary", icon=":material/download:")
 
-    st.markdown("##### Activity log")
+
+def _activity_log():
     st.caption("Who did what, and when (Philippine time). Useful for accountability during the pilot.")
     log = pd.DataFrame(db.get_audit(300))
     if log.empty:
         st.info("No activity yet.")
-    else:
-        log["action"] = log["action"].map(lambda a: ACTION_LABELS.get(a, a))
-        st.dataframe(log.rename(columns={"at": "When", "actor": "Who", "action": "What", "detail": "Details"}),
-                     hide_index=True, width="stretch", height=320)
+        return
+    log["at"] = log["at"].map(dt_label)
+    log["action"] = log["action"].map(lambda a: ACTION_LABELS.get(a, a))
+    st.dataframe(log.rename(columns={"at": "When", "actor": "Who", "action": "What", "detail": "Details"}),
+                 hide_index=True, width="stretch", height=480)

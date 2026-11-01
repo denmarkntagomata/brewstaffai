@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from timefmt import slot_short
 from ui import AMBER, BORDER, LEVEL_COLOR, LIME, MUTED, RED, TEXT, GREEN, BLUE
 
 FONT = dict(family="Source Sans Pro, Arial, sans-serif", color=TEXT, size=14)
@@ -66,10 +67,11 @@ def confidence_bar(probs):
 
 def day_chart(rows):
     df = pd.DataFrame(rows)
+    df["hour"] = df.slot.map(slot_short)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=df.slot, y=df.cashiers, name="Cashiers", marker_color=AMBER), secondary_y=False)
-    fig.add_trace(go.Bar(x=df.slot, y=df.baristas, name="Baristas", marker_color=GREEN), secondary_y=False)
-    fig.add_trace(go.Scatter(x=df.slot, y=df.customers, name="Expected customers", mode="lines+markers",
+    fig.add_trace(go.Bar(x=df.hour, y=df.cashiers, name="Cashiers", marker_color=AMBER), secondary_y=False)
+    fig.add_trace(go.Bar(x=df.hour, y=df.baristas, name="Baristas", marker_color=GREEN), secondary_y=False)
+    fig.add_trace(go.Scatter(x=df.hour, y=df.customers, name="Expected customers", mode="lines+markers",
                              line=dict(color=LIME, width=3), marker=dict(size=8)), secondary_y=True)
     fig.update_layout(barmode="stack", legend=dict(orientation="h", y=1.15, x=0))
     fig.update_yaxes(title_text="Staff on the counter", secondary_y=False, dtick=1)
@@ -81,7 +83,7 @@ def day_chart(rows):
 def day_strip(rows):
     """Colored timeline: one block per hour, colored by the AI's predicted level."""
     fig = go.Figure(go.Bar(
-        x=[r["slot"][:5] for r in rows], y=[1] * len(rows), marker_color=[LEVEL_COLOR[r["level"]] for r in rows],
+        x=[slot_short(r["slot"]) for r in rows], y=[1] * len(rows), marker_color=[LEVEL_COLOR[r["level"]] for r in rows],
         text=[f"<b>{r['wait']}m</b>" for r in rows], textposition="inside", insidetextanchor="middle",
         textfont=dict(color="white", size=14),
         hovertemplate="%{x}<br>%{text} expected wait<extra></extra>"))

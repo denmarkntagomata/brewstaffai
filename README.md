@@ -1,9 +1,23 @@
-# BrewStaffAI — Version 4.1
+# BrewStaffAI — Version 4.2
 
 AI-Based Staffing Recommendation System for Jungle Brew Café, Parañaque City.
 Internal system: **Manager and Staff only.**
 
-## What's new in v4.1
+## What's new in v4.2
+
+| Area | What changed |
+|---|---|
+| 12-hour time (both sides) | All times now show the Philippine way with AM/PM, e.g., **1:00 PM – 2:00 PM** and **Oct 31, 2026 · 11:27 PM**. The AI explanations are also asked to use AM/PM. Times are still saved in 24-hour form in the database, so nothing changes in the data or the AI logic. |
+| Edit or delete today's plan (manager) | The Dashboard now has **Edit plan** and **Delete plan** under today's staffing plan. Edit lets you change customers, cashiers, or baristas per hour; changed hours are re-checked by the AI before saving. Delete asks for confirmation first. Both are recorded in the activity log. |
+| Archive is easy to find (manager) | An **Archive (n)** button now sits right under **Refresh** on Staff Reports. Each report card has its own **Archive** button (no more hidden dropdown); a small pop-up asks for the reason. Inside the archive you can **Restore** or **Delete now** (with a confirmation pop-up). |
+| Activity log tab (manager) | The activity log table moved to its own **Settings → Activity log** tab, right after Data & backup. The "Activity log · n events" card stays on Data & backup. |
+| Friendlier Pilot Results (manager) | New **How to use this page** guide (open by default until there is pilot data), numbered tabs, and short "how to read this chart" notes under each result. |
+| Delete confirmation (staff) | Pressing **Delete report** now opens a pop-up: *"Are you sure…? Once deleted, it cannot be recovered. If you change your mind, you will need to send a new report."* |
+| Cleaner code | Simpler section comments and a small `timefmt.py` helper for all time labels. No changes to the AI model, recommendation logic, or database data. |
+
+**Upgrading from v4.1:** just replace the files (keep your `.streamlit/secrets.toml`). No database changes are needed.
+
+## What was new in v4.1
 
 | Area | What changed |
 |---|---|
@@ -12,6 +26,8 @@ Internal system: **Manager and Staff only.**
 | Accuracy per level | **How the AI Works** now shows precision, recall, and F1-score for Okay, Congested, and Overloaded, plus a short explanation of where the AI makes mistakes. |
 | Response time | **How the AI Works** shows how fast one AI prediction is, and the average time for planning a day, testing an hour, and AI tagging (measured automatically while the app is used). Included in the backup ZIP as `response_times.csv`. |
 | Small fixes | Chart labels no longer overlap; single-topic charts no longer show one very thick bar. |
+
+Edit `privacy.py` to change the contact person or how long data is kept. Change `NOTICE_VERSION` there if you edit the text, so everyone is asked to read it again.
 
 ## What was new in v4
 
@@ -47,14 +63,14 @@ python -m streamlit run app.py
 ## Pages
 
 **Manager**
-- **Dashboard:** today's plan, open issues, latest reports
+- **Dashboard:** today's plan (with **Edit plan** / **Delete plan**), open issues, latest reports
 - **Staffing Planner**
   - *Plan the day:* the AI plans every hour; publish it to staff
   - *Test a specific hour:* try one hour (promo, someone absent)
-- **Staff Reports:** AI-tagged reports, charts, weekly summary (CSV), resolve, reply, archive
+- **Staff Reports:** AI-tagged reports, charts, weekly summary (CSV), resolve, reply, archive (Archive button under Refresh)
 - **Pilot Results:** AI vs. staff agreement by day, and the tagging accuracy check
 - **How the AI Works:** visual explanation for the panel
-- **Settings:** account, team, café defaults, AI services, data & backup
+- **Settings:** account, team, café defaults, AI services, data & backup, activity log
 
 **Staff**
 - **My Shift Today:** the published crew plan and quick buttons
@@ -92,6 +108,7 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 | `login_page.py` | Login screen and first-time setup |
 | `session_cookie.py` | Stay logged in after a page refresh |
 | `privacy.py` | One-time privacy notice and consent |
+| `timefmt.py` | 12-hour (AM/PM) time labels |
 | `auth.py` | Email, password, lockout, and timeout rules |
 | `db.py` | Database (Neon PostgreSQL online, SQLite locally) |
 | `pages_manager.py` / `pages_pilot.py` / `pages_staff.py` / `settings_page.py` | The pages |
