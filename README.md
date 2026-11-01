@@ -9,8 +9,7 @@ Internal system: **Manager and Staff only.**
 |---|---|
 | Built-in User Guide (manager) | **How the AI Works** now has two tabs: **How the AI works** (the same accuracy and charts for the panel) and **User guide**. The guide is visual: pick a topic (Daily routine, Staffing Planner, Staff Reports, Pilot Results, Settings, Colors & AI, Troubleshooting, Glossary & help) and see numbered step cards, color legends, and tap-to-open FAQs. |
 | Built-in User Guide (staff) | **Settings** now has three tabs: **My account**, **User guide** (staff tasks only: get started, send a report, report an incident, My Reports, troubleshooting, glossary), and **How the AI works** (a simple 4-step explanation with the color legend, no charts). |
-| Help contact | The Glossary & help section shows: *Need help? Contact the BrewStaffAI team leader, Denmark Nercua Tagomata, at +639919160399 / denmarkntagomata.pup@gmail.com.* |
-| Full manual download | Both guides have a **Download the full User Manual (PDF)** button. The manual is updated for v4.2 (12-hour times, Archive button, plan edit/delete, Activity log tab, delete pop-up) and saved as `assets/BrewStaffAI_User_Manual.pdf`. |
+| Help contact | The Glossary & help section shows: *Need help? Contact the BrewStaffAI team leader, Denmark Nercua Tagomata, at denmarkntagomata.pup@gmail.com.* |
 | No logic changes | The AI model, recommendations, database, and all v4.2 features are unchanged. The guide lives in its own file, `guide.py`. |
 
 **Upgrading from v4.2:** replace the files and push. No database or Secrets changes are needed.
@@ -120,7 +119,6 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 | `privacy.py` | One-time privacy notice and consent |
 | `timefmt.py` | 12-hour (AM/PM) time labels |
 | `guide.py` | Built-in User Guide (manager and staff) and the simple "How the AI works" for staff |
-| `assets/BrewStaffAI_User_Manual.pdf` | Full user manual (downloadable from the guides) |
 | `auth.py` | Email, password, lockout, and timeout rules |
 | `db.py` | Database (Neon PostgreSQL online, SQLite locally) |
 | `pages_manager.py` / `pages_pilot.py` / `pages_staff.py` / `settings_page.py` | The pages |

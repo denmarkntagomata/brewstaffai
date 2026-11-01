@@ -1,8 +1,7 @@
 """
 guide.py - built-in User Guide (manager and staff) and the simple "How the AI works" for staff.
-Visual cards and short steps; the full PDF manual can be downloaded at the bottom.
+Visual cards and short steps.
 """
-import os
 import re
 
 import streamlit as st
@@ -10,9 +9,7 @@ import streamlit as st
 import ui
 
 SUPPORT_NAME = "Denmark Nercua Tagomata"
-SUPPORT_PHONE = "+639919160399"
 SUPPORT_EMAIL = "denmarkntagomata.pup@gmail.com"
-MANUAL_PDF = os.path.join(ui.ASSETS, "BrewStaffAI_User_Manual.pdf")
 
 CSS = f"""
 <style>
@@ -96,14 +93,7 @@ def glossary(rows):
 
 def help_box():
     st.markdown(f'<div class="g-help"><b>Need help?</b><br>Contact the BrewStaffAI team leader, <b>{SUPPORT_NAME}</b>, at '
-                f'<b>{SUPPORT_PHONE}</b> / <b>{SUPPORT_EMAIL}</b>, or ask the café manager.</div>', unsafe_allow_html=True)
-
-
-def download_manual(key):
-    if os.path.exists(MANUAL_PDF):
-        with open(MANUAL_PDF, "rb") as f:
-            st.download_button("Download the full User Manual (PDF)", f.read(), file_name="BrewStaffAI_User_Manual_v4.2.pdf",
-                               mime="application/pdf", icon=":material/menu_book:", key=key)
+                f'<b>{SUPPORT_EMAIL}</b>, or ask the café manager.</div>', unsafe_allow_html=True)
 
 
 COMMON_TROUBLE = [
@@ -235,8 +225,6 @@ def manager_guide():
         glossary(COMMON_TERMS + [("Archive", "Hide a report with a reason; deleted after 30 days."),
                                  ("Agreement %", "Share of reports where the AI predicted the same level staff felt.")])
         help_box()
-    st.divider()
-    download_manual("dl_manual_mgr")
 
 
 # ------------------------------------------------------------------ staff
@@ -290,8 +278,6 @@ def staff_guide():
         st.markdown("#### Glossary")
         glossary(COMMON_TERMS)
         help_box()
-    st.divider()
-    download_manual("dl_manual_staff")
 
 
 def staff_ai_simple():
