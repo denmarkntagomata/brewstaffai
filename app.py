@@ -31,6 +31,20 @@ def logout(msg=None):
     st.rerun()
 
 
+@st.dialog("Log out of BrewStaffAI?")
+def _logout_dialog(user):
+    """v4.3.0: asks first, so an accidental click on Log out does not end the session."""
+    st.markdown(f"**{ui.esc(user['full_name'])}**, are you sure you want to log out?")
+    st.caption("You will need to type your work email and password again to come back in. "
+               "Any report you have not sent yet will be lost.")
+    c1, c2 = st.columns(2)
+    if c1.button("Stay logged in", width="stretch"):
+        st.rerun()
+    if c2.button("Yes, log out", type="primary", icon=":material/logout:", width="stretch"):
+        db.log(user["email"], "logout")
+        logout("You have logged out.")
+
+
 def badge(title, n):
     return f"{title} ({n})" if n else title
 
@@ -111,10 +125,10 @@ def main():
     page = st.navigation(nav)
     with st.sidebar:
         st.divider()
-        if st.button("Log out", icon=":material/logout:", width="stretch"):
-            db.log(user["email"], "logout")
-            logout("You have logged out.")
-        st.caption(f"Auto logout after {auth.IDLE_MINUTES} min of no activity")
+        logout_clicked = st.button("Log out", icon=":material/logout:", width="stretch")
+        st.caption(f"Auto logout after {auth.IDLE_MINUTES} min of no activity · v{ui.APP_VERSION}")
+    if logout_clicked:
+        _logout_dialog(user)        # opened outside the sidebar block so the pop-up always shows in the middle
     page.run()
 
 

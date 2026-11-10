@@ -10,6 +10,7 @@ import streamlit as st
 
 import charts
 import db
+import demand
 import guide
 import ui
 from ai_helper import CATEGORIES, explain_day, explain_hour, weekly_summary
@@ -44,13 +45,41 @@ def current_slot_index(slots):
 
 
 def expected_customers(d, slots):
+    """Customers per hour for the planner. v4.3.0: comes from the Customer Demand Forecaster, which learns from
+    real counts. If anything goes wrong, the café defaults table is used so the planner never stops working.
+    Returns (customers, source text, details) as dictionaries keyed by time slot."""
     prof = db.get_setting("hourly_profile")
-    out, src = {}, {}
+    try:
+        f = demand.get_forecaster()
+    except Exception:
+        f = None
+    out, src, detail = {}, {}, {}
     for s in slots:
-        avg, n = db.avg_reported_customers(d.strftime("%A"), s)
-        out[s] = int(round(avg)) if avg else int(prof.get(str(int(s[:2])), 15))
-        src[s] = f"staff reports ({n})" if avg else "café defaults"
-    return out, src
+        hour = int(s[:2])
+        if f is None:
+            out[s], src[s], detail[s] = int(prof.get(str(hour), 15)), "café defaults (forecaster unavailable)", None
+            continue
+        p = f.predict(d.weekday(), hour)
+        out[s], detail[s] = p["customers"], p
+        src[s] = (f"AI forecast · {p['confidence'].lower()} confidence ({p['n_hour']} counts)" if p["learned"]
+                  else "café defaults (no counts for this hour yet)")
+    return out, src, detail
+
+
+def forecast_caption():
+    """One line under the planner's customer table: how much real data the forecast is based on."""
+    try:
+        sm = demand.get_forecaster().summary()
+    except Exception:
+        return
+    if not sm["n_obs"]:
+        st.caption("The AI forecast has no real counts yet, so it uses the café defaults. It starts learning as staff "
+                   "send end-of-shift reports, or when you import the owner's hourly data in "
+                   "**Settings → Demand data**.")
+    else:
+        st.caption(f"The AI forecast learned from **{sm['n_obs']} hourly counts over {sm['n_days']} day(s)** "
+                   f"(staff reports {sm['n_staff']}, owner data {sm['n_owner']}). Overall confidence: "
+                   f"**{sm['confidence']}**. More days of data make it more accurate.")
 
 
 def base_condition():
@@ -209,14 +238,19 @@ def _plan_day():
     if db.get_plans(str(d)):
         st.caption("A plan for this day is already published. Publishing again replaces it. "
                    "To change it without re-planning, use Edit plan on the Dashboard.")
-    cust, src = expected_customers(d, slots)
-    with st.expander("Expected customers per hour (edit if you expect a promo or a slow day)"):
-        df = pd.DataFrame({"Hour": [slot_label(s) for s in slots], "Customers": [cust[s] for s in slots], "Source": [src[s] for s in slots]})
-        edited = st.data_editor(df, hide_index=True, disabled=["Hour", "Source"], width="stretch", key=f"edit_{d}",
+    cust, src, detail = expected_customers(d, slots)
+    with st.expander("Expected customers per hour · AI forecast (edit if you expect a promo or a slow day)"):
+        df = pd.DataFrame({"Hour": [slot_label(s) for s in slots], "Customers": [cust[s] for s in slots],
+                           "Usual range": [f"{detail[s]['low']}–{detail[s]['high']}" if detail[s] else "–" for s in slots],
+                           "Based on": [src[s] for s in slots]})
+        edited = st.data_editor(df, hide_index=True, disabled=["Hour", "Usual range", "Based on"], width="stretch",
+                                key=f"edit_{d}",
                                 column_config={"Customers": st.column_config.NumberColumn(min_value=1, max_value=150,
                                                                                           step=1)})
         cust = {h: int(c) if pd.notna(c) else cust[h] for h, c in zip(slots, edited.Customers)}
-    st.caption(f"Uses the café defaults in Settings (up to {max_staff()} counter staff per hour).")
+        forecast_caption()
+    st.caption(f"Customer numbers come from the AI demand forecast. The most counter staff per hour "
+               f"({max_staff()}) comes from the café defaults in Settings.")
 
     if st.button("Generate AI plan for the day", icon=":material/auto_awesome:", type="primary", key="day_go"):
         with st.spinner("The AI is planning every hour and double-checking each one..."):
@@ -333,9 +367,10 @@ def _plan_hour():
         st.warning("Jungle Brew is closed on Sundays.")
         return
     slot = c1.selectbox("Hour", slots, index=current_slot_index(slots), key=f"hr_slot_{d}", format_func=slot_label)
-    cust, src = expected_customers(d, [slot])
+    cust, src, detail = expected_customers(d, [slot])
     customers = c2.number_input("Expected customers this hour", 1, 150, cust[slot], key=f"hr_cust_{d}_{slot}")
-    c2.caption(f"Suggested from {src[slot]}")
+    rng = f" · usual range {detail[slot]['low']}–{detail[slot]['high']}" if detail[slot] else ""
+    c2.caption(f"Suggested by: {src[slot]}{rng}")
     cur_c = c3.number_input("Cashiers you have now", 1, 2, 1, key="hr_c")
     cur_b = c3.number_input("Baristas you have now", 1, 4, 1, key="hr_b")
 
@@ -616,7 +651,7 @@ def _archived_card(r, names, me):
 # How the ai works
 def how_ai_works():
     ui.page_header("How the AI Works",
-                   "How the two AI parts of BrewStaffAI work and how accurate they are, plus a visual guide to the system.")
+                   "How the AI parts of BrewStaffAI work and how accurate they are, plus a visual guide to the system.")
     ai_tab, guide_tab = st.tabs(["How the AI works", "User guide"])
     with ai_tab:
         _ai_evidence()
@@ -668,6 +703,19 @@ because the barista station is the café's main bottleneck.</div>""", unsafe_all
                     f"<b>{weakest}</b> ({rep[weakest]['f1-score']:.0%} F1). Most mistakes happen in hours close to "
                     f"the 7-minute or 15-minute limit, where a small change in customers moves the hour to the next "
                     f"level. The AI almost never confuses Okay with Overloaded.</div>", unsafe_allow_html=True)
+
+    st.markdown("#### Customer demand forecast (new in v4.3.0)")
+    st.markdown("""
+<div class='bs-card'><b>In simple words:</b> before the AI can choose a crew, it must know how many customers are
+coming. The forecaster starts from the café's usual numbers, then <b>learns from real counts</b>: staff end-of-shift
+reports and the owner's hourly data. With only a few days of data it stays close to the usual numbers; as more days
+arrive it follows the real pattern for each hour and weekday. <b>Method:</b> Ridge regression (machine learning) that
+learns the percentage by which each hour and weekday is busier or calmer than the café's usual number.
+<b>Data cleaning:</b> impossible numbers are removed and repeated counts for the same hour are merged.</div>""",
+                unsafe_allow_html=True)
+    forecast_caption()
+    st.page_link(st.session_state.pages["pilot"], label="See how accurate the forecast was (Pilot Results → tab 3)",
+                 icon=":material/arrow_forward:")
 
     st.markdown("#### Response time")
     model = get_model()

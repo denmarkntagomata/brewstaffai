@@ -194,3 +194,33 @@ def accuracy_gauge(acc, baseline):
                "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
                "threshold": {"line": {"color": AMBER, "width": 4}, "value": 85}}))
     return _layout(fig, height=270, margin=dict(l=45, r=45, t=50, b=20))
+
+
+def forecast_by_hour(res):
+    """Average customers per hour: what really happened vs. the café table vs. the demand forecaster."""
+    g = res.groupby("hour")[["actual", "table", "forecast"]].mean().reset_index()
+    labels = [f"{int(h) % 12 or 12} {'AM' if h < 12 else 'PM'}" for h in g["hour"]]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=labels, y=g["actual"].round(1), name="What really happened",
+                         marker_color="rgba(163,174,166,.45)"))
+    fig.add_trace(go.Scatter(x=labels, y=g["table"].round(1), name="Café default table", mode="lines+markers",
+                             line=dict(color=AMBER, dash="dot")))
+    fig.add_trace(go.Scatter(x=labels, y=g["forecast"].round(1), name="AI demand forecast", mode="lines+markers",
+                             line=dict(color=LIME, width=3)))
+    fig.update_yaxes(title="Average customers in the hour", rangemode="tozero")
+    fig.update_xaxes(title="Hour of the day")
+    return _layout(fig, height=360, title=dict(text="Customers per hour: real vs. forecast", font=dict(size=16)),
+                   legend=dict(orientation="h", y=-0.28))
+
+
+def forecast_error(sc):
+    """Average mistake (in customers per hour) of the three methods. Shorter bar = better."""
+    names = ["Café default table", "Same-weekday average (old)", "AI demand forecast"]
+    vals = [sc["table"]["mae"], sc["old_avg"]["mae"], sc["forecast"]["mae"]]
+    fig = go.Figure(go.Bar(x=names, y=[round(v, 2) for v in vals], marker_color=[MUTED, AMBER, LIME],
+                           text=[f"{v:.1f}" for v in vals], textposition="outside", cliponaxis=False,
+                           hovertemplate="%{x}<br>Average mistake: %{y:.2f} customers<extra></extra>"))
+    fig.update_yaxes(title="Average mistake (customers per hour)", rangemode="tozero")
+    return _layout(fig, height=360, title=dict(text="How far off was each method? (shorter is better)",
+                                               font=dict(size=16)), showlegend=False)
+

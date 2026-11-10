@@ -20,7 +20,8 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], div[data-testi
 .st-key-login div[data-testid="stColumn"]:first-child {{ padding:0 !important; }}
 .st-key-login div[data-testid="stColumn"]:last-child {{ height:100vh; overflow-y:auto; }}
 html, body, section.stMain, [data-testid="stMain"] {{ overflow:hidden; }}
-.bs-photo {{ height:100vh; min-height:640px; background-size:cover; background-position:center;
+.bs-photo {{ height:100vh; min-height:640px; background-size:cover; background-position:center 45%;
+  image-rendering:auto;
   position:relative; }}
 .bs-photo::after {{ content:""; position:absolute; inset:0;
   background:linear-gradient(90deg, rgba(14,19,17,0) 60%, rgba(14,19,17,.85) 100%); }}
@@ -121,7 +122,7 @@ def render():
         left, right = st.columns([1.05, 1], gap="small")
         with left:
             st.markdown(f"<div class='bs-photo' role='img' aria-label='Jungle Brew Café storefront at night' "
-                        f"style=\"background-image:url('data:image/jpeg;base64,{asset_b64('storefront.jpg')}')\">"
+                        f"style=\"background-image:url('data:image/jpeg;base64,{asset_b64('storefront_hd.jpg')}')\">"
                         f"</div>", unsafe_allow_html=True)
         with right:
             _, mid, _ = st.columns([1, 8, 1])

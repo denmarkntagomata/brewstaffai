@@ -1,9 +1,27 @@
-# BrewStaffAI — Version 4.2.1
+# BrewStaffAI — Version 4.3.0
 
 AI-Based Staffing Recommendation System for Jungle Brew Café, Parañaque City.
 Internal system: **Manager and Staff only.**
 
-## What's new in v4.2.1
+## What's new in v4.3.0
+
+| Area | What changed |
+|---|---|
+| **Customer Demand Forecaster (major update)** | The Staffing Planner no longer relies on a fixed placeholder table for "customers per hour". A **Ridge regression** (machine learning) learns, from real counts, how much busier or calmer each hour and weekday is than the café's usual number. It learns from **staff end-of-shift reports** and the **owner's hourly data**. With little data it stays close to the café defaults; it moves toward the real pattern as days are added. New file: `forecaster.py`. |
+| Planner | **Expected customers per hour** is now the AI forecast, with a **usual range** and a note on what it is based on (for example, "AI forecast · medium confidence (4 counts)"). The manager can still edit any number. If the forecaster ever fails, the planner falls back to the café defaults automatically. |
+| Owner's data import | New **Settings → Demand data** tab. Import the owner's hourly numbers as CSV: (1) date, hour, customers; (2) date, hour, sales in pesos (needs an average spend per customer); or (3) one row per receipt with a date-and-time column. A template, a preview, and a date-format option are included. It also shows what the AI forecasts for each weekday. |
+| Forecast accuracy (Chapter 4 evidence) | New **Pilot Results → 3 · Demand forecast** tab. It replays history day by day (each day is forecast using only earlier days) and compares the AI forecast with the café default table and the old same-weekday average: average mistake (MAE), % error (MAPE), and share of hours within 20%. CSV downloads included. |
+| Faster planner | The planner used to ask the database once per hour (about 14 queries). It now reads the counts once and keeps the fitted forecaster for 2 minutes. |
+| Log out confirmation | Pressing **Log out** (staff and manager) asks "Are you sure you want to log out?" first, so an accidental tap no longer ends the session. |
+| Sharper login picture | The login photo is replaced with a higher-resolution version (1536 px wide, previously 663 px). |
+| Test file | `python test_forecaster.py` runs 33 checks on the forecaster (cleaning, learning, no data leakage, backtest, file import). |
+| Small changes | The sidebar shows the app version. Backup ZIP now includes `demand_history.csv`. User guides updated. Activity log shows data imports. |
+
+**Upgrading from v4.2.1:** replace the files and push to GitHub. No Secrets changes are needed. The new table (`demand_history`) is created automatically the first time the app starts. The AI model (`model/model.joblib`) is unchanged.
+
+---
+
+## What was new in v4.2.1
 
 | Area | What changed |
 |---|---|
@@ -125,6 +143,8 @@ Without keys, AI boxes say "Basic summary (AI is unavailable right now)" and the
 | `ui.py` / `charts.py` | Styling and charts |
 | `ai_helper.py` | Gemini (main) / Groq (backup) / offline fallback |
 | `recommender.py` | Decision Tree prediction, recommendation, simulation double-check |
+| `forecaster.py` / `demand.py` | Customer Demand Forecaster (learning, cleaning, backtest, owner-file import) and its cached page helper |
+| `test_forecaster.py` | 33 checks for the forecaster (`python test_forecaster.py`) |
 | `sim_engine.py`, `generate_dataset.py`, `train_model.py`, `labels.py` | Simulator, dataset, and model training |
 
 ## Notes and assumptions

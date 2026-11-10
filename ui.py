@@ -9,6 +9,7 @@ from functools import lru_cache
 
 import streamlit as st
 
+APP_VERSION = "4.3.0"
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 BG, CARD, BORDER, TEXT, MUTED = "#0E1311", "#161E1A", "#26332C", "#EEF1EC", "#A3AEA6"

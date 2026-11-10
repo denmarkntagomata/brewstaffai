@@ -2,7 +2,9 @@
 pages_pilot.py - Pilot Results page for the paper and the defense.
   Tab 1: AI prediction vs. what staff felt, day by day.
   Tab 2: tagging accuracy check (team hand-labels reports without seeing the AI tags).
+  Tab 3: demand forecast accuracy (v4.3.0): how close the customer forecast was to what really happened.
 """
+import json
 from datetime import date, timedelta
 
 import pandas as pd
@@ -10,6 +12,8 @@ import streamlit as st
 
 import charts
 import db
+import demand
+import forecaster
 import ui
 from ai_helper import CATEGORIES, SENTIMENTS
 from labels import CLASSES
@@ -34,11 +38,13 @@ def pilot_results():
 2. Choose the feeling and topic **you** think is right, then save.
 3. After {CHECK_GOAL} reports, the gauges show how often the AI agreed with you (target {TARGET:.0%}).
 4. Download the results for the paper.""")
-    t1, t2 = st.tabs(["1 · AI vs. staff", "2 · Check AI tags"])
+    t1, t2, t3 = st.tabs(["1 · AI vs. staff", "2 · Check AI tags", "3 · Demand forecast"])
     with t1:
         _agreement()
     with t2:
         _tag_check()
+    with t3:
+        _forecast()
 
 
 def _default_range():
@@ -178,3 +184,89 @@ def _tag_check():
         if st.button("Yes, remove all labels", type="primary"):
             db.clear_checks(me)
             st.rerun()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _run_backtest(profile_json, obs):
+    return forecaster.backtest(json.loads(profile_json), obs)
+
+
+def _forecast():
+    st.caption("Did the AI forecast the number of customers well? We replay the history day by day: for each day the "
+               "AI forecasts using **only earlier days**, then we compare with what really happened. The same hours "
+               "are scored three ways so the comparison is fair.")
+    obs, rep = demand.clean_data()
+    if obs.empty:
+        st.info("No customer counts yet. They come from staff end-of-shift reports (customers in the hour) and from "
+                "the owner's hourly data (Settings → Demand data). Results appear here automatically.")
+        return
+    profile = db.get_setting("hourly_profile")
+    sm = forecaster.DemandForecaster(profile).fit(obs, loo=False).summary()
+    a, b, c, d = st.columns(4)
+    with a:
+        ui.kpi("Hourly counts used", sm["n_obs"], f"after cleaning ({rep['invalid']} removed)")
+    with b:
+        ui.kpi("Days covered", sm["n_days"], f"{sm['first']:%b %d} – {sm['last']:%b %d}")
+    with c:
+        ui.kpi("Sources", f"{sm['n_staff']} staff · {sm['n_owner']} owner", "owner numbers win if both exist")
+    with d:
+        ui.kpi("Overall confidence", sm["confidence"],
+               "Low: under 5 days or 40 counts", color={"High": ui.LEVEL_COLOR["Okay"], "Medium": ui.AMBER,
+                                                         "Low": ui.RED}[sm["confidence"]])
+    st.write("")
+    res, sc = _run_backtest(json.dumps(profile, sort_keys=True), obs)
+    if sc is None:
+        st.info("The test needs counts from **at least 2 different days**. Come back after a second day of reports, "
+                "or import the owner's data in Settings → Demand data.")
+        return
+
+    gain = sc["gain_vs_table"]
+    if gain >= 0.05:
+        st.success(f"The AI forecast was **{gain:.0%} more accurate** than the café default table "
+                   f"(average mistake {sc['forecast']['mae']:.1f} vs. {sc['table']['mae']:.1f} customers per hour).")
+    elif gain <= -0.05:
+        st.warning(f"The AI forecast was not better than the café default table yet (average mistake "
+                   f"{sc['forecast']['mae']:.1f} vs. {sc['table']['mae']:.1f}). This usually means there are too few "
+                   "days of data. It improves as more days arrive.")
+    else:
+        st.info(f"The AI forecast and the café default table were about equally accurate (average mistake "
+                f"{sc['forecast']['mae']:.1f} vs. {sc['table']['mae']:.1f}).")
+    if sc["n"] < 100 or sc["days"] < 5:
+        st.caption(f"Small sample: {sc['n']} hours over {sc['days']} tested day(s). Treat this result as early evidence.")
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        ui.kpi("AI forecast: average mistake", f"{sc['forecast']['mae']:.1f}", "customers per hour (MAE)", color=ui.LIME)
+    with k2:
+        ui.kpi("Café table: average mistake", f"{sc['table']['mae']:.1f}", "customers per hour (MAE)")
+    with k3:
+        ui.kpi("AI forecast: within 20%", f"{sc['forecast']['within20']:.0%}", "of hours were close enough")
+    with k4:
+        ui.kpi("AI forecast: % error", f"{sc['forecast']['mape']:.0%}", "average (MAPE)")
+    left, right = st.columns(2, gap="large")
+    with left:
+        ui.plain_chart(charts.forecast_error(sc), key="fc_err")
+    with right:
+        ui.plain_chart(charts.forecast_by_hour(res), key="fc_hour")
+    st.caption("Left: the average mistake of each method (shorter is better). Right: bars = what really happened on "
+               "average in each hour; the dotted amber line = the café default table; the green line = the AI forecast.")
+
+    by_day = (res.assign(err_table=(res["table"] - res["actual"]).abs(), err_old=(res["old_avg"] - res["actual"]).abs(),
+                         err_ai=(res["forecast"] - res["actual"]).abs())
+              .groupby(["date", "weekday"], as_index=False)
+              .agg(hours=("actual", "size"), table=("err_table", "mean"), old=("err_old", "mean"), ai=("err_ai", "mean")))
+    by_day = by_day.rename(columns={"date": "Date", "weekday": "Day", "hours": "Hours tested", "table": "Café table mistake",
+                                    "old": "Old average mistake", "ai": "AI forecast mistake"}).round(1)
+    st.dataframe(by_day, hide_index=True, width="stretch")
+    raw = res.rename(columns={"actual": "actual_customers", "table": "cafe_table", "old_avg": "old_same_weekday_avg",
+                              "forecast": "ai_forecast"})
+    c1, c2, _ = st.columns([1, 1, 2])
+    c1.download_button("Day-by-day (CSV)", by_day.to_csv(index=False).encode("utf-8"),
+                       file_name=f"forecast_accuracy_by_day_{db.ph_today()}.csv", mime="text/csv",
+                       icon=":material/download:", width="stretch")
+    c2.download_button("Every hour tested (CSV)", raw.to_csv(index=False).encode("utf-8"),
+                       file_name=f"forecast_accuracy_hours_{db.ph_today()}.csv", mime="text/csv",
+                       icon=":material/download:", width="stretch")
+    st.caption("**Average mistake (MAE)**: how many customers off the forecast was, on average, in one hour. "
+               "**Within 20%**: share of hours where the forecast was within 20% of the real count. "
+               "**% error (MAPE)**: the average mistake as a percentage of the real count.")

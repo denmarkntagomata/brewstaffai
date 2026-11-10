@@ -216,6 +216,10 @@ def init_db():
             id {serial}, at TEXT NOT NULL, kind TEXT NOT NULL, seconds REAL NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS sessions(
             token_hash TEXT PRIMARY KEY, email TEXT NOT NULL, created_at TEXT, last_seen TEXT)""",
+        f"""CREATE TABLE IF NOT EXISTS demand_history(
+            id {serial}, obs_date TEXT NOT NULL, obs_hour INTEGER NOT NULL, customers INTEGER NOT NULL,
+            source TEXT DEFAULT 'owner', added_by TEXT, added_at TEXT)""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_hour ON demand_history(obs_date, obs_hour)",
         "CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_plans_date ON plans(plan_date)",
         "CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at)",
@@ -545,6 +549,55 @@ def avg_reported_customers(weekday, time_slot):
     return (sum(vals) / len(vals), len(vals)) if vals else (None, 0)
 
 
+# demand data (v4.3.0): what the Customer Demand Forecaster learns from
+def get_demand_observations():
+    """Hourly customer counts from two places, in ONE database round trip each:
+    staff end-of-shift reports and the owner's imported data. Columns: date, hour, customers, source."""
+    staff = _rows("""SELECT report_date, time_slot, customers FROM reports WHERE report_type='end_of_shift'
+                     AND customers IS NOT NULL AND report_date IS NOT NULL AND archived_at IS NULL""")
+    owner = _rows("SELECT obs_date, obs_hour, customers FROM demand_history")
+    out = []
+    for r in staff:
+        try:
+            out.append({"date": r["report_date"], "hour": int(str(r["time_slot"])[:2]),
+                        "customers": r["customers"], "source": "staff"})
+        except (TypeError, ValueError):
+            continue
+    out += [{"date": r["obs_date"], "hour": r["obs_hour"], "customers": r["customers"], "source": "owner"}
+            for r in owner]
+    return pd.DataFrame(out, columns=["date", "hour", "customers", "source"])
+
+
+def demand_history_summary():
+    r = _one("SELECT COUNT(*) AS n, MIN(obs_date) AS first_d, MAX(obs_date) AS last_d FROM demand_history")
+    return {"n": int(r["n"] or 0), "first": r["first_d"], "last": r["last_d"]} if r else {"n": 0, "first": None, "last": None}
+
+
+def save_demand_history(obs, by):
+    """Saves the owner's hourly counts. A day that is uploaded again replaces that day's old numbers.
+    obs: DataFrame with date (Timestamp), hour (int), customers (int)."""
+    rows = [{"d": pd.Timestamp(r.date).strftime("%Y-%m-%d"), "h": int(r.hour), "c": int(r.customers),
+             "by": by, "at": now()} for r in obs.itertuples()]
+    if not rows:
+        return 0
+    days = sorted({r["d"] for r in rows})
+    delete = sa.text("DELETE FROM demand_history WHERE obs_date IN :days").bindparams(
+        sa.bindparam("days", expanding=True))
+    with engine().begin() as c:
+        for i in range(0, len(days), 300):                  # small batches keep SQLite and Postgres both happy
+            c.execute(delete, {"days": days[i:i + 300]})
+        c.execute(sa.text("INSERT INTO demand_history(obs_date, obs_hour, customers, source, added_by, added_at) "
+                          "VALUES(:d, :h, :c, 'owner', :by, :at)"), rows)
+    log(by, "demand_imported", f"{len(rows)} hours, {days[0]} to {days[-1]}")
+    return len(rows)
+
+
+def clear_demand_history(by):
+    n = _exec("DELETE FROM demand_history")
+    log(by, "demand_cleared", f"{n} imported hours removed")
+    return n
+
+
 # plans
 def save_plans(rows, plan_date, created_by, action="plan_published"):
     with engine().begin() as c:
@@ -597,6 +650,8 @@ def export_zip(by=None):
         "settings.csv": pd.DataFrame(_rows("SELECT * FROM settings")),
         "activity_log.csv": pd.DataFrame(get_audit(100000)),
         "response_times.csv": pd.DataFrame(_rows("SELECT at, kind, seconds FROM timings ORDER BY id")),
+        "demand_history.csv": pd.DataFrame(_rows("SELECT obs_date, obs_hour, customers, source, added_by, added_at "
+                                                 "FROM demand_history ORDER BY obs_date, obs_hour")),
     }
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, df in tables.items():

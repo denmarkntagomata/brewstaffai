@@ -151,6 +151,9 @@ def manager_guide():
               ("Adjust (optional)", "Open the hour-by-hour table, change crew, press <b>Check my changes</b>."),
               ("Publish", "Press <b>Publish this plan to staff</b>.")])
         tip("The AI recommends; <b>you decide</b>. Your changes are re-checked by the AI and saved next to the AI's original crew.")
+        cards([("📈", "AI demand forecast", "The <i>Expected customers</i> table is now an AI forecast. It shows a <b>usual range</b> and how much real data it is based on."),
+               ("🧠", "It keeps learning", "It learns from staff reports and the owner's hourly data (<b>Settings → Demand data</b>). With little data it stays close to the café defaults."),
+               ("✏️", "You can still edit", "Change any number for a promo or a slow day. Your edit is used for that plan only.")])
         st.markdown("#### Test a specific hour")
         cards([("🕐", "When to use", "A promo, a big order, or someone absent."),
                ("🎯", "What you get", "The recommended crew, expected wait gauge, and every crew option (★ best)."),
@@ -187,12 +190,18 @@ def manager_guide():
               ("Label", "Choose the feeling and topic you think is right."),
               ("Repeat", "Do 50 reports."),
               ("Results", "Gauges show how often the AI matched (target 80%).")])
+        st.markdown("#### Tab 3 · Demand forecast")
+        flow([("Replay", "For each day, the AI forecasts customers using only earlier days."),
+              ("Compare", "Its guess is compared with the real count, and with the café table."),
+              ("Read", "<b>Average mistake</b> in customers per hour: shorter is better."),
+              ("Export", "Download the CSVs for Chapter 4.")])
         tip("Higher agreement means the AI's predictions match real shifts at Jungle Brew.")
 
     elif topic == "Settings":
         cards([("👤", "My account", "Your profile, privacy notice, change password."),
                ("👥", "Team accounts", "Add a person (shows a one-time temporary password), reset password, deactivate."),
                ("☕", "Café defaults", "Customers per hour, service times, most staff per hour. Keep these accurate."),
+               ("📈", "Demand data", "Import the owner's hourly numbers (CSV) so the AI forecast learns the real pattern. Shows what the AI forecasts for each weekday."),
                ("🤖", "AI services", "Shows if Gemini and Groq are connected. Press <b>Test AI connection</b>."),
                ("🗄️", "Data & backup", "Cloud · Online status and the full backup ZIP. Download daily during the pilot."),
                ("📜", "Activity log", "Who did what, and when.")])
@@ -203,7 +212,7 @@ def manager_guide():
         levels()
         crew_legend()
         st.markdown("#### How a recommendation is made")
-        flow([("Expected customers", "From staff reports or café defaults."),
+        flow([("Expected customers", "AI demand forecast, learned from real counts."),
               ("AI predicts", "The Decision Tree checks every crew option."),
               ("Smallest Okay crew", "It picks the smallest crew with short waits."),
               ("Double-check", "The queue simulator confirms the wait (10 runs)."),
@@ -217,13 +226,17 @@ def manager_guide():
         faq(COMMON_TROUBLE + [
             ("The planner shows a warning about some hours", "Even with all available staff, those hours can't reach short waits. Consider extra help or a simpler menu, or raise <b>Most counter staff</b> in Café defaults."),
             ("“Setup is locked”", "The SETUP_CODE is missing in the app's Secrets. Only the system owner can fix this."),
-            ("The plan looks wrong", "Check <b>Settings → Café defaults</b>. The AI uses those numbers."),
+            ("The plan looks wrong", "Check <b>Settings → Café defaults</b> and <b>Demand data</b>. The AI uses those numbers. You can also edit the customers per hour in the planner."),
+            ("The customer forecast looks too low or high", "Look at <i>Based on</i> in the planner. If it says <i>café defaults</i>, the AI has no counts for that hour yet. Import the owner's data in <b>Settings → Demand data</b>, or edit the number."),
+            ("The owner's file will not import", "Save it as <b>CSV</b>, and use the template: date, hour, customers. If dates look wrong, change the date format option. A sales-in-pesos file needs the average spend per customer."),
         ])
 
     else:
         st.markdown("#### Glossary")
         glossary(COMMON_TERMS + [("Archive", "Hide a report with a reason; deleted after 30 days."),
-                                 ("Agreement %", "Share of reports where the AI predicted the same level staff felt.")])
+                                 ("Agreement %", "Share of reports where the AI predicted the same level staff felt."),
+                                 ("Demand forecast", "The AI's guess of how many customers will come in an hour, learned from real counts."),
+                                 ("Average mistake (MAE)", "How many customers off the forecast is, on average, in one hour. Smaller is better.")])
         help_box()
 
 
@@ -248,11 +261,12 @@ def staff_guide():
 
     elif topic == "Send a report":
         flow([("Date and hour", "Pick your shift date and busiest hour."),
-              ("Customers and crew", "Your best guess of customers, cashiers, baristas."),
+              ("Customers and crew", "Your honest count or best guess of customers, cashiers, baristas."),
               ("How busy?", "Okay, Congested, or Overloaded. Be honest."),
               ("Comment (optional)", "What went well or wrong."),
               ("Send", "See the AI result right away.")])
         levels()
+        tip("Your customer number teaches the AI how busy each hour really is. The closer it is to the real count, the better the plans get.")
         tip("Write about shift conditions only (workload, equipment, customers, supplies, process). Don't name or rate coworkers.",
             warn=True)
 
@@ -287,7 +301,7 @@ def staff_ai_simple():
     flow([("You report", "You send how busy your shift felt."),
           ("AI reads it", "It tags the feeling and topic and writes a short summary."),
           ("Manager acts", "The manager sees it, replies, and fixes problems."),
-          ("Better plans", "The AI uses this to plan the right crew each hour.")])
+          ("Better plans", "The AI learns how many customers come each hour and plans the right crew.")])
     st.markdown("#### What the colors mean")
     levels()
     crew_legend()

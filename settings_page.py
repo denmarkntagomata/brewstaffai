@@ -1,13 +1,17 @@
 """
 settings_page.py - settings in one place.
-Manager: My account · Team accounts · Café defaults · AI services · Data & backup
+Manager: My account · Team accounts · Café defaults · Demand data · AI services · Data & backup · Activity log
 Staff:   My account
 """
+import io
+
 import pandas as pd
 import streamlit as st
 
 import auth
 import db
+import demand
+import forecaster
 import guide
 from timefmt import dt_label
 import privacy
@@ -80,14 +84,16 @@ def staff_settings():
 def manager_settings():
     user = st.session_state.user
     page_header("Settings", "Everything you can change in BrewStaffAI, grouped in one place.")
-    t1, t2, t3, t4, t5, t6 = st.tabs(["My account", "Team accounts", "Café defaults", "AI services", "Data & backup",
-                                      "Activity log"])
+    t1, t2, t3, t7, t4, t5, t6 = st.tabs(["My account", "Team accounts", "Café defaults", "Demand data", "AI services",
+                                          "Data & backup", "Activity log"])
     with t1:
         _my_account(user)
     with t2:
         _team(user)
     with t3:
         _cafe_defaults()
+    with t7:
+        _demand_data(user)
     with t4:
         _ai_services()
     with t5:
@@ -157,8 +163,120 @@ def _team(user):
                 st.rerun()
 
 
+def _demand_data(user):
+    """v4.3.0: where the Customer Demand Forecaster gets its numbers, and where the owner's data is imported."""
+    st.caption("The AI forecaster learns how many customers Jungle Brew really has each hour. It uses staff "
+               "end-of-shift reports automatically, and you can add the owner's hourly numbers here.")
+    profile = db.get_setting("hourly_profile")
+    obs, rep = demand.clean_data()
+    f = forecaster.DemandForecaster(profile).fit(obs)
+    sm = f.summary()
+    a, b, c, d = st.columns(4)
+    with a:
+        kpi("Hourly counts used", sm["n_obs"], f"{rep['invalid']} unusable removed")
+    with b:
+        kpi("Days covered", sm["n_days"], f"{sm['first']:%b %d} – {sm['last']:%b %d}" if sm["n_obs"] else "no data yet")
+    with c:
+        kpi("From staff · owner", f"{sm['n_staff']} · {sm['n_owner']}", "owner numbers win if both exist")
+    with d:
+        kpi("Overall confidence", sm["confidence"], "more days = higher",
+            color={"High": LEVEL_COLOR["Okay"], "Medium": AMBER, "Low": RED}[sm["confidence"]])
+    st.write("")
+
+    with st.container(border=True):
+        st.markdown("##### Import the owner's hourly data")
+        st.caption("Ask the owner for the hourly numbers (Monday to Saturday). Save the file as **CSV** "
+                   "(Excel or Google Sheets: File → Save as / Download → CSV). Accepted files: "
+                   "① date, hour, customers (or transactions/orders) · ② date, hour, sales in pesos · "
+                   "③ one date-and-time column with one row per receipt.")
+        st.download_button("Download the CSV template", forecaster.TEMPLATE_CSV.encode("utf-8"),
+                           file_name="jungle_brew_hourly_customers_template.csv", mime="text/csv",
+                           icon=":material/download:")
+        n_up = st.session_state.setdefault("demand_up_n", 0)
+        up = st.file_uploader("Choose the CSV file", type=["csv"], key=f"demand_up_{n_up}")
+        c1, c2 = st.columns(2)
+        fmt = c1.radio("Dates in the file are written as", ["Month/Day/Year or Year-Month-Day", "Day/Month/Year"],
+                       key="demand_fmt")
+        spend = c2.number_input("Average spend per customer (₱) · only needed for a sales-in-pesos file", 0.0, 5000.0,
+                                0.0, 10.0, key="demand_spend",
+                                help="Customers are estimated as sales ÷ this number. Leave 0 if the file already "
+                                     "has customer counts.")
+        if up is not None:
+            _demand_preview(up, fmt.startswith("Day"), spend, user)
+
+    st.write("")
+    st.markdown("##### What the AI forecasts now")
+    st.caption("Customers per hour the Staffing Planner will suggest, by weekday. These change as more counts arrive.")
+    hours = sorted(int(h) for h in profile)
+    days = [("Mon", 0), ("Tue", 1), ("Wed", 2), ("Thu", 3), ("Fri", 4), ("Sat", 5)]
+    grid = pd.DataFrame({"Hour": [f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}" for h in hours],
+                         "Café default": [int(round(f.prior(h))) for h in hours],
+                         **{n: [f.predict(w, h)["customers"] for h in hours] for n, w in days}})
+    st.dataframe(grid, hide_index=True, width="stretch")
+    st.caption("Saturdays open at 11 AM and Sundays are closed, so the earlier Saturday hours are not used by the planner.")
+
+    left, _ = st.columns([1, 2])
+    with left.popover("Remove all imported owner data", icon=":material/delete:"):
+        st.write("This removes the numbers imported from the owner's file. Staff reports are not touched. "
+                 "You can import the file again anytime.")
+        if st.button("Yes, remove imported data", type="primary", key="demand_clear"):
+            db.clear_demand_history(user["email"])
+            demand.refresh()
+            st.rerun()
+
+
+def _demand_preview(up, dayfirst, spend, user):
+    if up.size > 5 * 1024 * 1024:
+        st.error("This file is larger than 5 MB. Please split it into smaller files.")
+        return
+    raw = up.getvalue()
+    try:
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(io.BytesIO(raw), encoding="latin-1")
+    except Exception:
+        st.error("I could not read this file as a CSV. Open it in Excel or Google Sheets and save it as CSV again.")
+        return
+    try:
+        obs, info = forecaster.parse_owner_table(df, avg_spend=spend or None, dayfirst=dayfirst)
+    except forecaster.NeedsAverageSpend:
+        st.warning("This file has **sales in pesos**, not customer counts. Type the average spend per customer (₱) "
+                   "above so I can estimate the customers. Ask the owner for a typical amount.")
+        return
+    except ValueError as e:
+        st.error(str(e))
+        return
+    kind = {"counts": "customer counts", "transactions": "receipts counted per hour"}.get(info["shape"])
+    if kind is None:
+        kind = f"sales in pesos ÷ ₱{info['avg_spend']:,.0f} per customer"
+    days = obs["date"].dt.normalize().nunique()
+    st.success(f"Ready: **{len(obs)} hours** over **{days} day(s)**, from **{obs['date'].min():%b %d, %Y}** to "
+               f"**{obs['date'].max():%b %d, %Y}** (read as {kind}).")
+    if info["bad_rows"]:
+        st.warning(f"{info['bad_rows']} row(s) could not be read (missing or unclear date, hour, or number) and will be skipped.")
+    if (obs["customers"] > forecaster.MAX_VALID).any() or (obs["customers"] < forecaster.MIN_VALID).any():
+        st.warning("Some hours have 0 or an extremely high number. The AI ignores those hours when it learns.")
+    if obs["date"].max() > pd.Timestamp(db.ph_today()):
+        st.warning("Some dates are in the future. They will be ignored until those days have passed. "
+                   "If the dates look wrong, change the date format above.")
+    st.caption("First rows as the AI read them (check the dates and hours look right):")
+    show = obs.head(8).assign(date=lambda x: x["date"].dt.strftime("%b %d, %Y"))
+    st.dataframe(show.rename(columns={"date": "Date", "hour": "Hour (24h)", "customers": "Customers"}),
+                 hide_index=True, width="stretch")
+    st.caption("If you import a day that is already saved, the new numbers replace the old ones for that day.")
+    if st.button(f"Import {len(obs)} hours", type="primary", icon=":material/upload:", key="demand_go"):
+        n = db.save_demand_history(obs, user["email"])
+        demand.refresh()
+        st.session_state.demand_up_n += 1
+        st.toast(f"Imported {n} hours. The forecaster is learning from them now.")
+        st.rerun()
+
+
 def _cafe_defaults():
-    st.caption("These numbers feed the Staffing Planner. Update them after the on-site observation.")
+    st.caption("These numbers feed the Staffing Planner. The customers-per-hour table is the AI forecaster's "
+               "**starting guess**: it learns corrections from real counts (see **Demand data**), so keep it as your "
+               "best honest estimate.")
     prof = db.get_setting("hourly_profile")
     svc = db.get_setting("service_times")
     left, right = st.columns([1.2, 1], gap="large")
@@ -184,6 +302,7 @@ def _cafe_defaults():
         db.set_setting("hourly_profile", {k: int(v) for k, v in zip(prof.keys(), edited["Customers"])}, by=st.session_state.user["email"])
         db.set_setting("service_times", {"cashier": cm, "simple": sp_, "complex": cp, "p_simple": ps / 100}, by=st.session_state.user["email"])
         db.set_setting("max_counter_staff", mx, by=st.session_state.user["email"])
+        demand.refresh()
         st.success("Saved. The planner will use these numbers from now on.")
 
 
@@ -218,6 +337,7 @@ ACTION_LABELS = {
     "report_status": "Report status changed", "report_edited": "Report edited by sender",
     "report_deleted": "Report deleted", "report_reply": "Manager replied", "report_archived": "Report archived",
     "report_restored": "Report restored", "archive_auto_deleted": "Old archived reports deleted",
+    "demand_imported": "Demand data imported", "demand_cleared": "Demand data removed",
     "tag_checked": "AI tag checked", "privacy_accepted": "Privacy notice accepted",
     "privacy_declined": "Privacy notice declined", "tag_checks_cleared": "Tag checks cleared", "data_exported": "Data exported",
 }
